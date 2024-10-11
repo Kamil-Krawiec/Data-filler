@@ -26,17 +26,8 @@ jobs:
         pip install -r requirements.txt 
         pip install . 
 
-    - name: Install build module
-      run: |
-        pip install build 
-
-    - name: List directory contents
-      run: ls -al
-
-    - name: Build package
-      run: |
-        python3 -m build 
-
+    - name: Build binary wheel and a source tarball
+      run: python setup.py sdist
 
     - name: Publish distribution to PyPI
       env:
