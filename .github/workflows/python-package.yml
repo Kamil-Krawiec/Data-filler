@@ -26,10 +26,6 @@ jobs:
         pip install -r requirements.txt 
         pip install . 
 
-    - name: Build package
-      run: |
-        python -m build  
-
     - name: Publish distribution to PyPI
       env:
         TWINE_USERNAME: __token__
