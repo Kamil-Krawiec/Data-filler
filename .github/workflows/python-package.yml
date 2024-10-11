@@ -26,10 +26,14 @@ jobs:
         pip install -r requirements.txt 
         pip install . 
 
+    - name: Build package
+      run: |
+        python3 -m build  
+
     - name: Publish distribution to PyPI
       env:
         TWINE_USERNAME: __token__
         TWINE_PASSWORD: ${{ secrets.pypi_password }}
       run: |
-        pip install twine  
-        twine upload dist/*
+        python3 -m pip install –upgrade twine
+        python3 -m twine upload –repository testpypi dist/*
