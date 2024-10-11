@@ -27,7 +27,6 @@ jobs:
         pip install .
 
     - name: Publish distribution to PyPI
-      uses: actions/setup-python@v2
       with:
         password: ${{ secrets.pypi_password }}
         repository_url: https://upload.pypi.org/legacy/
