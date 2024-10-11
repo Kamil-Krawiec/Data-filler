@@ -30,6 +30,9 @@ jobs:
       run: |
         pip install build 
 
+    - name: List directory contents
+      run: ls -al
+
     - name: Build package
       run: |
         python3 -m build 
