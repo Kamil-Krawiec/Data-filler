@@ -34,4 +34,5 @@ jobs:
         TWINE_USERNAME: __token__
         TWINE_PASSWORD: ${{ secrets.pypi_password }}
       run: |
+        pip install twine 
         twine upload –repository testpypi dist/*
