@@ -12,7 +12,7 @@ from sqlglot.expressions import (
     NotNullColumnConstraint,
     CheckColumnConstraint
 )
-import pprint
+
 
 def parse_create_tables(sql_script):
     """
@@ -64,7 +64,7 @@ def parse_create_tables(sql_script):
                             table_primary_key.append(col_name)
                             column_info["constraints"].append("PRIMARY KEY")
                         elif isinstance(constraint.kind, UniqueColumnConstraint):
-                            table_unique_constraints.append(col_name)
+                            table_unique_constraints.append([col_name])
                             column_info["constraints"].append("UNIQUE")
                         elif isinstance(constraint.kind, ForeignKey):
                             references = constraint.args.get("reference")
@@ -75,7 +75,8 @@ def parse_create_tables(sql_script):
                                     ref_table = references.this.this.name
                                 else:
                                     ref_table = None
-                                ref_columns = [col.name for col in references.expressions] if references.expressions else []
+                                ref_columns = [col.name for col in
+                                               references.this.expressions] if references.this and references.this.expressions else []
                             else:
                                 ref_table = None
                                 ref_columns = []
@@ -112,7 +113,8 @@ def parse_create_tables(sql_script):
                             ref_table = references.this.this.name
                         else:
                             ref_table = None
-                        ref_columns = [col.name for col in references.expressions] if references.expressions else []
+                        ref_columns = [col.name for col in
+                                       references.this.expressions] if references.this and references.this.expressions else []
                     else:
                         ref_table = None
                         ref_columns = []
@@ -145,7 +147,8 @@ def parse_create_tables(sql_script):
                                 ref_table = references.this.this.name
                             else:
                                 ref_table = None
-                            ref_columns = [col.name for col in references.expressions] if references.expressions else []
+                            ref_columns = [col.name for col in
+                                           references.this.expressions] if references.this and references.this.expressions else []
                         else:
                             ref_table = None
                             ref_columns = []
