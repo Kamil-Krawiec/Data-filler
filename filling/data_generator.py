@@ -2,8 +2,12 @@ import random
 import re
 from faker import Faker
 from datetime import datetime
+from pyparsing import (Word, alphas, alphanums, nums, oneOf, infixNotation, opAssoc, ParserElement, Keyword, Literal,
+                       QuotedString)
 
 fake = Faker()
+ParserElement.enablePackrat()
+
 
 class DataGenerator:
     def __init__(self, tables, num_rows=10):
@@ -26,12 +30,10 @@ class DataGenerator:
             'Authors': {
                 'sex': ['M', 'F']
             },
-            'Members': {
-                'email_domain': ['gmail.com', 'yahoo.com', 'hotmail.com', 'outlook.com', 'icloud.com']
-            }
         }
         self.table_order = self.resolve_table_order()
         self.initialize_primary_keys()
+        self.expression_parser = self.create_expression_parser()
 
     def resolve_table_order(self):
         """
@@ -189,11 +191,14 @@ class DataGenerator:
         for unique_cols in unique_constraints:
             unique_key = tuple(row[col] for col in unique_cols)
             unique_set = self.unique_values[table][tuple(unique_cols)]
-            while unique_key in unique_set:
+            max_attempts = 10
+            attempts = 0
+            while unique_key in unique_set and attempts < max_attempts:
                 for col in unique_cols:
                     column = self.get_column_info(table, col)
                     row[col] = self.generate_column_value(table, column, row)
                 unique_key = tuple(row[col] for col in unique_cols)
+                attempts += 1
             unique_set.add(unique_key)
 
     def enforce_check_constraints(self, table, row):
@@ -235,10 +240,12 @@ class DataGenerator:
         if 'INT' in col_type or 'SERIAL' in col_type:
             return random.randint(1, 1000)
         elif 'VARCHAR' in col_type:
-            length = int(re.search(r'\((\d+)\)', col_type).group(1)) if '(' in col_type else 20
+            length_match = re.search(r'\((\d+)\)', col_type)
+            length = int(length_match.group(1)) if length_match else 20
             return self.generate_string_value(col_name, length, row)
         elif 'CHAR' in col_type:
-            length = int(re.search(r'\((\d+)\)', col_type).group(1)) if '(' in col_type else 1
+            length_match = re.search(r'\((\d+)\)', col_type)
+            length = int(length_match.group(1)) if length_match else 1
             return ''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZ', k=length))
         elif 'DATE' in col_type:
             return self.generate_date_value(col_name)
@@ -276,8 +283,8 @@ class DataGenerator:
         elif col_name.lower() == 'email':
             first = row.get('first_name', fake.first_name())
             last = row.get('last_name', fake.last_name())
-            domain = random.choice(self.predefined_values['Members']['email_domain'])
-            return f"{first.lower()}.{last.lower()}@{domain}"[:length]
+            email_domain = row.get('email_domain', fake.free_email_domain())
+            return f"{first.lower()}.{last.lower()}@{email_domain}"[:length]
         elif col_name.lower() == 'isbn':
             return ''.join(random.choices('0123456789', k=13))
         else:
@@ -304,6 +311,37 @@ class DataGenerator:
         else:
             return fake.date()
 
+    def create_expression_parser(self):
+        """
+        Create a parser for SQL expressions used in CHECK constraints.
+
+        Returns:
+            pyparsing.ParserElement: The parser for expressions.
+        """
+        integer = Word(nums)
+        real = Word(nums + ".")
+        string = QuotedString("'", escChar='\\')
+        identifier = Word(alphas, alphanums + "_$").setName("identifier")
+
+        # Define operators
+        arith_op = oneOf('+ - * /')
+        comp_op = oneOf('= != <> < > <= >= IN NOT IN LIKE NOT LIKE')
+        bool_op = oneOf('AND OR')
+        not_op = Keyword('NOT')
+
+        # Define expressions
+        expr = infixNotation(
+            integer | real | string | identifier,
+            [
+                (not_op, 1, opAssoc.RIGHT),
+                (arith_op, 2, opAssoc.LEFT),
+                (comp_op, 2, opAssoc.LEFT),
+                (bool_op, 2, opAssoc.LEFT),
+            ]
+        )
+
+        return expr
+
     def evaluate_check_constraint(self, check, row):
         """
         Evaluate a CHECK constraint expression.
@@ -316,21 +354,67 @@ class DataGenerator:
             bool: True if the constraint is satisfied, False otherwise.
         """
         try:
-            expression = check
-            # Replace SQL functions with Python equivalents
-            expression = expression.replace('REGEXP_LIKE', 're.match')
-            expression = expression.replace('CURRENT_DATE', f"'{datetime.now().date()}'")
-            expression = re.sub(r"EXTRACT\s*\(\s*YEAR\s+FROM\s+([^\)]+)\)", r"\1.year", expression)
-            # Replace column names with their values
-            for col in row:
-                value = row[col]
-                if isinstance(value, str):
-                    value = f"'{value}'"
-                expression = re.sub(rf'\b{col}\b', str(value), expression)
-            # Evaluate the expression
-            return eval(expression, {"re": re, "datetime": datetime})
+            # Parse the expression
+            parsed_expr = self.expression_parser.parseString(check, parseAll=True)[0]
+
+            # Convert parsed expression to Python expression
+            python_expr = self.convert_sql_expr_to_python(parsed_expr, row)
+
+            # Evaluate the expression safely
+            return bool(eval(python_expr))
         except Exception as e:
+            # You might want to log the exception for debugging
             return False
+
+    def convert_sql_expr_to_python(self, parsed_expr, row):
+        """
+        Convert a parsed SQL expression into a Python expression.
+
+        Args:
+            parsed_expr: The parsed SQL expression.
+            row (dict): Current row data.
+
+        Returns:
+            str: The Python expression.
+        """
+        if isinstance(parsed_expr, str):
+            # It's a variable or a literal
+            if parsed_expr in row:
+                value = row[parsed_expr]
+                if isinstance(value, str):
+                    return f"'{value}'"
+                else:
+                    return str(value)
+            else:
+                return parsed_expr
+        elif isinstance(parsed_expr, list):
+            if len(parsed_expr) == 1:
+                return self.convert_sql_expr_to_python(parsed_expr[0], row)
+            else:
+                # Handle unary NOT operator
+                if parsed_expr[0] == 'NOT':
+                    operand = self.convert_sql_expr_to_python(parsed_expr[1], row)
+                    return f"not ({operand})"
+                # Handle binary operators
+                left = self.convert_sql_expr_to_python(parsed_expr[0], row)
+                operator = parsed_expr[1]
+                right = self.convert_sql_expr_to_python(parsed_expr[2], row)
+                # Map SQL operators to Python operators
+                operator_map = {
+                    '=': '==',
+                    '<>': '!=',
+                    '!=': '!=',
+                    'AND': 'and',
+                    'OR': 'or',
+                    'LIKE': 'in',
+                    'NOT LIKE': 'not in'
+                    # Add more operators as needed
+                }
+                python_operator = operator_map.get(operator.upper(), operator)
+                return f"({left} {python_operator} {right})"
+        else:
+            # Other types (e.g., numbers)
+            return str(parsed_expr)
 
     def extract_columns_from_check(self, check):
         """
@@ -342,7 +426,12 @@ class DataGenerator:
         Returns:
             list: List of column names.
         """
-        return re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', check)
+        # Use regex to find identifiers (variables)
+        tokens = re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', check)
+        # Exclude SQL keywords and operators
+        keywords = {'AND', 'OR', 'NOT', 'IN', 'LIKE', 'IS', 'NULL', 'BETWEEN', 'EXISTS', 'ALL', 'ANY', 'SOME'}
+        operators = {'=', '!=', '<>', '<', '>', '<=', '>=', '+', '-', '*', '/', '%'}
+        return [token for token in tokens if token.upper() not in keywords and token not in operators]
 
     def get_column_info(self, table, col_name):
         """
@@ -370,3 +459,48 @@ class DataGenerator:
         self.generate_initial_data()
         self.enforce_constraints()
         return self.generated_data
+
+    def export_as_sql_insert_query(self):
+        """
+        Export the generated data as SQL INSERT queries.
+
+        Returns:
+            str: A string containing SQL INSERT queries.
+        """
+        insert_queries = []
+
+        for table_name, records in self.generated_data.items():
+            if not records:
+                continue  # Skip if there's no data for the table
+
+            # Get column names from the table schema
+            columns = [col['name'] for col in self.tables[table_name]['columns']]
+
+            # Start constructing the INSERT statement
+            insert_prefix = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES"
+
+            # Collect values for each record
+            values_list = []
+            for record in records:
+                values = []
+                for col in columns:
+                    value = record.get(col)
+                    if value is None:
+                        values.append('NULL')
+                    elif isinstance(value, str):
+                        # Escape single quotes in strings
+                        escaped_value = value.replace("'", "''")
+                        values.append(f"'{escaped_value}'")
+                    elif isinstance(value, datetime):
+                        values.append(f"'{value.strftime('%Y-%m-%d')}'")
+                    else:
+                        values.append(str(value))
+                values_str = f"({', '.join(values)})"
+                values_list.append(values_str)
+
+            # Combine the INSERT prefix and values
+            insert_query = f"{insert_prefix}\n" + ",\n".join(values_list) + ";"
+            insert_queries.append(insert_query)
+
+        # Combine all INSERT queries into a single string
+        return "\n\n".join(insert_queries)

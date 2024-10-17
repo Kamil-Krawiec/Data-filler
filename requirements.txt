@@ -4,3 +4,4 @@ Faker==30.3.0
 sqlparse
 sqlglot
 networkx
+pyparsing
