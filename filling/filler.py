@@ -1,7 +1,9 @@
 import random
+
 from faker import Faker
 
 fake = Faker()
+
 
 def generate_fake_data(tables, num_rows=10):
     """
@@ -34,10 +36,17 @@ def generate_fake_data(tables, num_rows=10):
     def get_column_info(table, col_name):
         return next((col for col in tables[table]['columns'] if col['name'] == col_name), None)
 
+    def fill_predefined_values(table, row_f):
+        """Fill the row_f with predefined values if applicable."""
+        if table in predefined_values:
+            for col_name_f, values in predefined_values[table].items():
+                if col_name_f not in row_f:
+                    row_f[col_name_f] = random.choice(values)
+
     # Determine table generation order based on foreign key dependencies
     table_order = resolve_table_order(tables)
 
-    # Step 1: Generate primary keys
+    # Step 1: Generate primary keys and predefined values
     for table in table_order:
         generated_data[table] = []
         primary_keys[table] = {}
@@ -45,9 +54,6 @@ def generate_fake_data(tables, num_rows=10):
         for pk in pk_columns:
             primary_keys[table][pk] = 1  # Initialize primary key counters
 
-    # Step 2: Generate primary key values for each table
-    for table in table_order:
-        pk_columns = tables[table].get('primary_key', [])
         for _ in range(num_rows):
             row = {}
             if len(pk_columns) == 1:
@@ -67,9 +73,13 @@ def generate_fake_data(tables, num_rows=10):
                         primary_keys[table][pk] += 1
                     else:
                         row[pk] = fake.unique.word()
+
+            # Fill predefined values
+            fill_predefined_values(table, row)
+
             generated_data[table].append(row)
 
-    # Step 3: Assign foreign keys
+    # Step 2: Assign foreign keys
     for table in table_order:
         fks = tables[table].get('foreign_keys', [])
         for row in generated_data[table]:
@@ -80,7 +90,7 @@ def generate_fake_data(tables, num_rows=10):
                 if ref_table in generated_data and ref_columns:
                     if len(fk_columns) == 1 and len(ref_columns) == 1:
                         ref_col = ref_columns[0]
-                        ref_values = [record[ref_col] for record in generated_data[ref_table] if record.get(ref_col) is not None]
+                        ref_values = [record[ref_col] for record in generated_data[ref_table]]
                         if ref_values:
                             row[fk_columns[0]] = random.choice(ref_values)
                         else:
@@ -100,26 +110,18 @@ def generate_fake_data(tables, num_rows=10):
                     for fk_col in fk_columns:
                         row[fk_col] = None
 
-    # Step 4: Set predefined values and fill other columns
+    # Step 3: Fill other columns and handle unique constraints
     for table in table_order:
+        unique_constraints = tables[table].get('unique_constraints', [])
         for row in generated_data[table]:
             sex_value = row.get('sex') if table == 'Authors' else None
             for column in tables[table]['columns']:
                 col_name = column['name']
                 if col_name in row:
-                    continue  # Value already set (primary key or foreign key)
+                    continue  # Value already set (primary key, foreign key, or predefined)
 
                 col_type = column['type']
                 constraints = column.get('constraints', [])
-
-                # Set predefined values
-                if table in predefined_values and col_name in predefined_values[table]:
-                    if col_name == 'sex':
-                        row[col_name] = random.choice(predefined_values[table][col_name])
-                        sex_value = row[col_name]
-                    else:
-                        row[col_name] = random.choice(predefined_values[table][col_name])
-                    continue
 
                 # Generate data based on column type
                 if 'INT' in col_type:
@@ -170,14 +172,16 @@ def generate_fake_data(tables, num_rows=10):
                     row[col_name] = value if random.choice([True, False]) else None
 
             # Handle unique constraints
-            for unique in tables[table].get('unique_constraints', []):
-                unique_val = tuple(row[col] for col in unique)
-                while unique_val in unique_combinations[table]:
-                    for col in unique:
+            for unique_cols in unique_constraints:
+                unique_key = tuple(row[col] for col in unique_cols)
+                while unique_key in unique_combinations[table]:
+                    # Regenerate values for unique columns
+                    for col in unique_cols:
                         col_info = get_column_info(table, col)
                         if col_info:
                             if 'VARCHAR' in col_info['type']:
-                                length = int(col_info['type'].split('(')[1].rstrip(')')) if '(' in col_info['type'] else 20
+                                length = int(col_info['type'].split('(')[1].rstrip(')')) if '(' in col_info[
+                                    'type'] else 20
                                 if col.lower() == 'email':
                                     first = fake.first_name()
                                     last = fake.last_name()
@@ -188,12 +192,16 @@ def generate_fake_data(tables, num_rows=10):
                                     row[col] = fake.unique.word()[:length]
                             elif 'INT' in col_info['type']:
                                 row[col] = random.randint(1001, 2000)
+                            elif 'SERIAL' in col_info['type']:
+                                row[col] = primary_keys[table][col]
+                                primary_keys[table][col] += 1
                             else:
                                 row[col] = fake.word()
-                    unique_val = tuple(row[col] for col in unique)
-                unique_combinations[table].add(unique_val)
+                    unique_key = tuple(row[col] for col in unique_cols)
+                unique_combinations[table].add(unique_key)
 
     return generated_data
+
 
 def resolve_table_order(tables):
     """
