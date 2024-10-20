@@ -36,6 +36,7 @@ class CheckConstraintEvaluator:
 
         lpar = Suppress('(')
         rpar = Suppress(')')
+        comma = Suppress(',')
 
         expr = Forward()
 
@@ -44,9 +45,17 @@ class CheckConstraintEvaluator:
             identifier('func_name') + lpar + Optional(delimitedList(expr))('args') + rpar
         )
 
+        # EXTRACT function parsing
+        extract_func = Group(
+            Keyword('EXTRACT', caseless=True)('func_name') + lpar +
+            (identifier | string)('field') +
+            Keyword('FROM', caseless=True).suppress() +
+            expr('source') + rpar
+        )
+
         # Atom can be an identifier, number, string, or a function call
         atom = (
-                func_call | real | integer | string | identifier | Group(lpar + expr + rpar)
+                extract_func | func_call | real | integer | string | identifier | Group(lpar + expr + rpar)
         )
 
         # Define expressions using infix notation
@@ -195,42 +204,41 @@ class CheckConstraintEvaluator:
             else:
                 # Possibly an unrecognized token, treat as a string literal
                 return f"'{parsed_expr}'"
+        if isinstance(parsed_expr, str):
+            # ... [existing code remains unchanged]
+            pass  # For brevity
         elif isinstance(parsed_expr, ParseResults):
             if 'func_name' in parsed_expr:
-                # Handle function calls
                 func_name = parsed_expr['func_name'].upper()
-                args = parsed_expr.get('args', [])
-                args_expr = [self.convert_sql_expr_to_python(arg, row) for arg in args]
-                # Map SQL functions to Python functions
-                func_map = {
-                    'EXTRACT': 'self.extract',
-                    'REGEXP_LIKE': 'self.regexp_like',
-                    # Add more function mappings as needed
-                }
-                if func_name in func_map:
-                    return f"{func_map[func_name]}({', '.join(args_expr)})"
+                if func_name == 'EXTRACT':
+                    # Handle EXTRACT function with 'field' and 'source'
+                    field = self.convert_sql_expr_to_python(parsed_expr['field'], row)
+                    source = self.convert_sql_expr_to_python(parsed_expr['source'], row)
+                    return f"self.extract({field}, {source})"
                 else:
-                    raise ValueError(f"Unsupported function '{func_name}' in CHECK constraint")
+                    # Handle other function calls
+                    args = parsed_expr.get('args', [])
+                    args_expr = [self.convert_sql_expr_to_python(arg, row) for arg in args]
+                    func_map = {
+                        'REGEXP_LIKE': 'self.regexp_like',
+                        # Add more function mappings as needed
+                    }
+                    if func_name in func_map:
+                        return f"{func_map[func_name]}({', '.join(args_expr)})"
+                    else:
+                        raise ValueError(f"Unsupported function '{func_name}' in CHECK constraint")
             elif len(parsed_expr) == 1:
                 return self.convert_sql_expr_to_python(parsed_expr[0], row)
             else:
                 # Handle unary and binary operators
                 return self.handle_operator(parsed_expr, row)
+        elif len(parsed_expr) == 1:
+            return self.convert_sql_expr_to_python(parsed_expr[0], row)
         else:
-            # Handle literals (e.g., numbers)
-            return str(parsed_expr)
+            # Handle unary and binary operators
+            return self.handle_operator(parsed_expr, row)
 
     def handle_operator(self, parsed_expr, row):
-        """
-        Handle unary and binary operators in the parsed expression.
-
-        Args:
-            parsed_expr: The parsed expression containing operators.
-            row (dict): Current row data.
-
-        Returns:
-            str: The Python expression.
-        """
         if len(parsed_expr) == 2:
             # Unary operator
             operator = parsed_expr[0]
@@ -242,32 +250,42 @@ class CheckConstraintEvaluator:
         elif len(parsed_expr) == 3:
             # Binary operator
             left = self.convert_sql_expr_to_python(parsed_expr[0], row)
-            operator = parsed_expr[1]
+            operator = parsed_expr[1].upper()
             right = self.convert_sql_expr_to_python(parsed_expr[2], row)
-            operator_map = {
-                '=': '==',
-                '<>': '!=',
-                '!=': '!=',
-                '>=': '>=',
-                '<=': '<=',
-                '>': '>',
-                '<': '<',
-                'AND': 'and',
-                'OR': 'or',
-                'LIKE': 'self.like',
-                'NOT LIKE': 'self.not_like',
-                'IS': 'is',
-                'IS NOT': 'is not',
-                'IN': 'in',
-                'NOT IN': 'not in',
-            }
-            python_operator = operator_map.get(operator.upper())
-            if python_operator is None:
-                raise ValueError(f"Unsupported operator '{operator}'")
-            if 'LIKE' in operator.upper():
-                return f"{python_operator}({left}, {right})"
+
+            if operator in ('IS', 'IS NOT'):
+                # Determine if the right operand is NULL
+                if right.strip() == 'None':
+                    # Use 'is' or 'is not' when comparing to NULL (None)
+                    python_operator = 'is' if operator == 'IS' else 'is not'
+                    return f"({left} {python_operator} {right})"
+                else:
+                    # Use '==' or '!=' for other comparisons
+                    python_operator = '==' if operator == 'IS' else '!='
+                    return f"({left} {python_operator} {right})"
             else:
-                return f"({left} {python_operator} {right})"
+                operator_map = {
+                    '=': '==',
+                    '<>': '!=',
+                    '!=': '!=',
+                    '>=': '>=',
+                    '<=': '<=',
+                    '>': '>',
+                    '<': '<',
+                    'AND': 'and',
+                    'OR': 'or',
+                    'LIKE': 'self.like',
+                    'NOT LIKE': 'self.not_like',
+                    'IN': 'in',
+                    'NOT IN': 'not in',
+                }
+                python_operator = operator_map.get(operator)
+                if python_operator is None:
+                    raise ValueError(f"Unsupported operator '{operator}'")
+                if 'LIKE' in operator:
+                    return f"{python_operator}({left}, {right})"
+                else:
+                    return f"({left} {python_operator} {right})"
         else:
             raise ValueError(f"Unsupported expression structure: {parsed_expr}")
 
