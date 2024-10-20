@@ -7,7 +7,7 @@ sql_script = open("DB_infos/sql_script.sql", "r").read()
 tables_parsed = parse_create_tables(sql_script)
 
 # Create an instance of DataGenerator with the parsed tables and desired number of rows
-data_generator = DataGenerator(tables_parsed, num_rows=3)
+data_generator = DataGenerator(tables_parsed, num_rows=100)
 
 # Generate the fake data
 fake_data = data_generator.generate_data()

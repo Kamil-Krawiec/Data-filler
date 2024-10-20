@@ -97,6 +97,33 @@ def generate_column_value(column, fake, constraints=None):
     col_name = column['name']
     col_type = column['type'].upper()
 
+    # PREDEFINED VALUES:
+    if col_name in ['sex']:
+        return random.choice(['M', 'F'])
+    if col_name in ['name', 'first_name', 'firstname']:
+        sex = column.get('sex', None)
+        return fake.first_name_male() if sex == 'M' else fake.first_name_female()
+    elif col_name in ['surname', 'last_name', 'lastname']:
+        sex = column.get('sex', None)
+        return fake.last_name_male() if sex == 'M' else fake.last_name_female()
+    elif col_name == 'email':
+        name = column.get('first_name', fake.word())
+        surname = column.get('last_name', fake.word())
+        return f"{name}.{surname}@{fake.free_email_domain()}"
+    elif col_name == 'phone':
+        return fake.phone_number()
+    elif col_name == 'address':
+        return fake.address()
+    elif col_name == 'city':
+        return fake.city()
+    elif col_name == 'country':
+        return fake.country()
+    elif col_name == 'company':
+        return fake.company()
+    elif col_name == 'job_title':
+        # Use predefined values or Faker
+        return fake.job()
+
     # Check for regex constraints
     regex_patterns = extract_regex_pattern(constraints, col_name)
     if regex_patterns:

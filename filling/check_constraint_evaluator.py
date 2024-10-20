@@ -143,11 +143,9 @@ class CheckConstraintEvaluator:
         try:
             # Parse the expression
             parsed_expr = self.expression_parser.parseString(check_expression, parseAll=True)[0]
-            print(f"Parsed Expression: {parsed_expr}")
 
             # Convert parsed expression to Python expression
             python_expr = self.convert_sql_expr_to_python(parsed_expr, row)
-            print(f"Python Expression: {python_expr}")
 
             # Evaluate the expression safely
             safe_globals = {
