@@ -1,11 +1,10 @@
 import random
 import re
+from datetime import datetime, date, timedelta
 from faker import Faker
-from datetime import datetime
-from pyparsing import (Word, alphas, alphanums, nums, oneOf, infixNotation, opAssoc, ParserElement, Keyword, Literal,
-                       QuotedString)
+from pyparsing import ParserElement
+from .functions import generate_column_value, create_expression_parser, extract_columns_from_check
 
-fake = Faker()
 ParserElement.enablePackrat()
 
 
@@ -23,17 +22,11 @@ class DataGenerator:
         self.generated_data = {}
         self.primary_keys = {}
         self.unique_values = {}
-        self.predefined_values = {
-            'Categories': {
-                'category_name': ['Fiction', 'Non-fiction', 'Science', 'History', 'Biography', 'Fantasy', 'Mystery']
-            },
-            'Authors': {
-                'sex': ['M', 'F']
-            },
-        }
+        self.predefined_values = {}
+        self.fake = Faker()  # Initialize Faker as a class attribute
         self.table_order = self.resolve_table_order()
         self.initialize_primary_keys()
-        self.expression_parser = self.create_expression_parser()
+        self.expression_parser = create_expression_parser()
 
     def resolve_table_order(self):
         """
@@ -83,7 +76,6 @@ class DataGenerator:
             for _ in range(self.num_rows):
                 row = {}
                 self.generate_primary_keys(table, row)
-                self.fill_predefined_values(table, row)
                 self.generated_data[table].append(row)
 
     def generate_primary_keys(self, table, row):
@@ -98,19 +90,6 @@ class DataGenerator:
         for pk in pk_columns:
             row[pk] = self.primary_keys[table][pk]
             self.primary_keys[table][pk] += 1
-
-    def fill_predefined_values(self, table, row):
-        """
-        Fill predefined values in a table row if applicable.
-
-        Args:
-            table (str): Table name.
-            row (dict): Row data.
-        """
-        predefined = self.predefined_values.get(table, {})
-        for col_name, values in predefined.items():
-            if col_name not in row:
-                row[col_name] = random.choice(values)
 
     def enforce_constraints(self):
         """
@@ -163,7 +142,7 @@ class DataGenerator:
             col_name = column['name']
             if col_name in row:
                 continue  # Value already set
-            row[col_name] = self.generate_column_value(table, column, row)
+            row[col_name] = generate_column_value(column, self.fake)
 
     def enforce_not_null_constraints(self, table, row):
         """
@@ -177,7 +156,7 @@ class DataGenerator:
             col_name = column['name']
             constraints = column.get('constraints', [])
             if 'NOT NULL' in constraints and row.get(col_name) is None:
-                row[col_name] = self.generate_column_value(table, column, row)
+                row[col_name] = generate_column_value(column, self.fake)
 
     def enforce_unique_constraints(self, table, row):
         """
@@ -191,15 +170,17 @@ class DataGenerator:
         for unique_cols in unique_constraints:
             unique_key = tuple(row[col] for col in unique_cols)
             unique_set = self.unique_values[table][tuple(unique_cols)]
-            max_attempts = 10
+            max_attempts = 100
             attempts = 0
             while unique_key in unique_set and attempts < max_attempts:
                 for col in unique_cols:
                     column = self.get_column_info(table, col)
-                    row[col] = self.generate_column_value(table, column, row)
+                    row[col] = generate_column_value(column, self.fake)
                 unique_key = tuple(row[col] for col in unique_cols)
                 attempts += 1
             unique_set.add(unique_key)
+            if attempts == max_attempts:
+                raise ValueError(f"Unable to generate unique value for columns {unique_cols} in table {table}")
 
     def enforce_check_constraints(self, table, row):
         """
@@ -211,136 +192,17 @@ class DataGenerator:
         """
         check_constraints = self.tables[table].get('check_constraints', [])
         for check in check_constraints:
-            max_attempts = 10
+            max_attempts = 10000
             attempts = 0
             while not self.evaluate_check_constraint(check, row) and attempts < max_attempts:
-                involved_columns = self.extract_columns_from_check(check)
+                involved_columns = extract_columns_from_check(check)
                 for col_name in involved_columns:
                     column = self.get_column_info(table, col_name)
                     if column:
-                        row[col_name] = self.generate_column_value(table, column, row)
+                        row[col_name] = generate_column_value(column, self.fake)
                 attempts += 1
-
-    def generate_column_value(self, table, column, row):
-        """
-        Generate a value for a column based on its type and constraints.
-
-        Args:
-            table (str): Table name.
-            column (dict): Column schema.
-            row (dict): Current row data.
-
-        Returns:
-            Any: Generated value.
-        """
-        col_name = column['name']
-        col_type = column['type']
-        sex_value = row.get('sex')
-
-        if 'INT' in col_type or 'SERIAL' in col_type:
-            return random.randint(1, 1000)
-        elif 'VARCHAR' in col_type:
-            length_match = re.search(r'\((\d+)\)', col_type)
-            length = int(length_match.group(1)) if length_match else 20
-            return self.generate_string_value(col_name, length, row)
-        elif 'CHAR' in col_type:
-            length_match = re.search(r'\((\d+)\)', col_type)
-            length = int(length_match.group(1)) if length_match else 1
-            return ''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZ', k=length))
-        elif 'DATE' in col_type:
-            return self.generate_date_value(col_name)
-        elif 'DECIMAL' in col_type or 'NUMERIC' in col_type:
-            precision, scale = 10, 2
-            match = re.search(r'\((\d+),\s*(\d+)\)', col_type)
-            if match:
-                precision, scale = int(match.group(1)), int(match.group(2))
-            return round(random.uniform(0, 1000), scale)
-        else:
-            return fake.word()
-
-    def generate_string_value(self, col_name, length, row):
-        """
-        Generate a string value for a VARCHAR column.
-
-        Args:
-            col_name (str): Column name.
-            length (int): Maximum length of the string.
-            row (dict): Current row data.
-
-        Returns:
-            str: Generated string value.
-        """
-        if col_name.lower() == 'first_name':
-            sex_value = row.get('sex')
-            if sex_value == 'M':
-                return fake.first_name_male()[:length]
-            elif sex_value == 'F':
-                return fake.first_name_female()[:length]
-            else:
-                return fake.first_name()[:length]
-        elif col_name.lower() == 'last_name':
-            return fake.last_name()[:length]
-        elif col_name.lower() == 'email':
-            first = row.get('first_name', fake.first_name())
-            last = row.get('last_name', fake.last_name())
-            email_domain = row.get('email_domain', fake.free_email_domain())
-            return f"{first.lower()}.{last.lower()}@{email_domain}"[:length]
-        elif col_name.lower() == 'isbn':
-            return ''.join(random.choices('0123456789', k=13))
-        else:
-            return fake.word()[:length]
-
-    def generate_date_value(self, col_name):
-        """
-        Generate a date value for a DATE column.
-
-        Args:
-            col_name (str): Column name.
-
-        Returns:
-            str: Generated date string in 'YYYY-MM-DD' format.
-        """
-        if col_name == 'birth_date':
-            start_date = datetime(1940, 1, 1)
-            end_date = datetime(2000, 12, 31)
-            return fake.date_between(start_date=start_date, end_date=end_date).isoformat()
-        elif col_name == 'registration_date':
-            start_date = datetime(2010, 1, 1)
-            end_date = datetime.now()
-            return fake.date_between(start_date=start_date, end_date=end_date).isoformat()
-        else:
-            return fake.date()
-
-    def create_expression_parser(self):
-        """
-        Create a parser for SQL expressions used in CHECK constraints.
-
-        Returns:
-            pyparsing.ParserElement: The parser for expressions.
-        """
-        integer = Word(nums)
-        real = Word(nums + ".")
-        string = QuotedString("'", escChar='\\')
-        identifier = Word(alphas, alphanums + "_$").setName("identifier")
-
-        # Define operators
-        arith_op = oneOf('+ - * /')
-        comp_op = oneOf('= != <> < > <= >= IN NOT IN LIKE NOT LIKE')
-        bool_op = oneOf('AND OR')
-        not_op = Keyword('NOT')
-
-        # Define expressions
-        expr = infixNotation(
-            integer | real | string | identifier,
-            [
-                (not_op, 1, opAssoc.RIGHT),
-                (arith_op, 2, opAssoc.LEFT),
-                (comp_op, 2, opAssoc.LEFT),
-                (bool_op, 2, opAssoc.LEFT),
-            ]
-        )
-
-        return expr
+            if attempts == max_attempts:
+                raise ValueError(f"Unable to satisfy CHECK constraint '{check}' in table {table}")
 
     def evaluate_check_constraint(self, check, row):
         """
@@ -361,9 +223,19 @@ class DataGenerator:
             python_expr = self.convert_sql_expr_to_python(parsed_expr, row)
 
             # Evaluate the expression safely
-            return bool(eval(python_expr))
+            safe_globals = {
+                '__builtins__': {},
+                're': re,
+                'datetime': datetime,
+                'date': date,
+                'timedelta': timedelta,
+            }
+            result = eval(python_expr, safe_globals, {})
+            return bool(result)
         except Exception as e:
-            # You might want to log the exception for debugging
+            # Log the exception for debugging
+            print(f"Error evaluating check constraint: {e}")
+            print(f"Constraint: {check}")
             return False
 
     def convert_sql_expr_to_python(self, parsed_expr, row):
@@ -379,20 +251,44 @@ class DataGenerator:
         """
         if isinstance(parsed_expr, str):
             # It's a variable or a literal
-            if parsed_expr in row:
+            if parsed_expr.upper() == 'CURRENT_DATE':
+                return f"datetime.now().date()"
+            elif parsed_expr.upper() in ('TRUE', 'FALSE'):
+                return parsed_expr.capitalize()
+            elif parsed_expr in row:
                 value = row[parsed_expr]
-                if isinstance(value, str):
+                if isinstance(value, datetime):
+                    return f"datetime.strptime('{value.strftime('%Y-%m-%d %H:%M:%S')}', '%Y-%m-%d %H:%M:%S')"
+                elif isinstance(value, date):
+                    return f"datetime.strptime('{value.strftime('%Y-%m-%d')}', '%Y-%m-%d').date()"
+                elif isinstance(value, str):
                     return f"'{value}'"
                 else:
                     return str(value)
+            elif re.match(r'^\d+(\.\d+)?$', parsed_expr):
+                # It's a numeric literal
+                return parsed_expr
             else:
+                # Possibly a function name or unrecognized token
                 return parsed_expr
         elif isinstance(parsed_expr, list):
             if len(parsed_expr) == 1:
                 return self.convert_sql_expr_to_python(parsed_expr[0], row)
             else:
+                # Handle function calls
+                if isinstance(parsed_expr[0], str) and parsed_expr[1] == '(':
+                    func_name = parsed_expr[0].upper()
+                    args = parsed_expr[2:-1]  # Exclude opening and closing parentheses
+                    args_expr = ', '.join(self.convert_sql_expr_to_python(arg, row) for arg in args)
+                    # Map SQL functions to Python functions
+                    func_map = {
+                        'EXTRACT': 'lambda field, source: getattr(source, field.lower())',
+                        # Add more function mappings as needed
+                    }
+                    if func_name in func_map:
+                        return f"{func_map[func_name]}({args_expr})"
                 # Handle unary NOT operator
-                if parsed_expr[0] == 'NOT':
+                if parsed_expr[0].upper() == 'NOT':
                     operand = self.convert_sql_expr_to_python(parsed_expr[1], row)
                     return f"not ({operand})"
                 # Handle binary operators
@@ -404,34 +300,29 @@ class DataGenerator:
                     '=': '==',
                     '<>': '!=',
                     '!=': '!=',
+                    '>=': '>=',
+                    '<=': '<=',
+                    '>': '>',
+                    '<': '<',
                     'AND': 'and',
                     'OR': 'or',
-                    'LIKE': 'in',
-                    'NOT LIKE': 'not in'
-                    # Add more operators as needed
+                    'LIKE': 're.match',
+                    'NOT LIKE': 'not re.match',
+                    'IS': 'is',
+                    'IS NOT': 'is not',
+                    'IN': 'in',
+                    'NOT IN': 'not in',
                 }
                 python_operator = operator_map.get(operator.upper(), operator)
-                return f"({left} {python_operator} {right})"
+                if 'LIKE' in operator.upper():
+                    # Handle LIKE operator using regex
+                    pattern = right.strip("'").replace('%', '.*').replace('_', '.')
+                    return f"{python_operator}('^{pattern}$', {left})"
+                else:
+                    return f"({left} {python_operator} {right})"
         else:
-            # Other types (e.g., numbers)
+            # Handle literals (e.g., numbers)
             return str(parsed_expr)
-
-    def extract_columns_from_check(self, check):
-        """
-        Extract column names from a CHECK constraint expression.
-
-        Args:
-            check (str): CHECK constraint expression.
-
-        Returns:
-            list: List of column names.
-        """
-        # Use regex to find identifiers (variables)
-        tokens = re.findall(r'\b[a-zA-Z_][a-zA-Z0-9_]*\b', check)
-        # Exclude SQL keywords and operators
-        keywords = {'AND', 'OR', 'NOT', 'IN', 'LIKE', 'IS', 'NULL', 'BETWEEN', 'EXISTS', 'ALL', 'ANY', 'SOME'}
-        operators = {'=', '!=', '<>', '<', '>', '<=', '>=', '+', '-', '*', '/', '%'}
-        return [token for token in tokens if token.upper() not in keywords and token not in operators]
 
     def get_column_info(self, table, col_name):
         """
@@ -492,7 +383,11 @@ class DataGenerator:
                         escaped_value = value.replace("'", "''")
                         values.append(f"'{escaped_value}'")
                     elif isinstance(value, datetime):
+                        values.append(f"'{value.strftime('%Y-%m-%d %H:%M:%S')}'")
+                    elif isinstance(value, date):
                         values.append(f"'{value.strftime('%Y-%m-%d')}'")
+                    elif isinstance(value, bool):
+                        values.append('TRUE' if value else 'FALSE')
                     else:
                         values.append(str(value))
                 values_str = f"({', '.join(values)})"
