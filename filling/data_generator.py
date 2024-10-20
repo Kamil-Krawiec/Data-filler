@@ -1,38 +1,122 @@
 import random
 import re
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
+import exrex
 from faker import Faker
 from pyparsing import ParserElement
+
 from .check_constraint_evaluator import CheckConstraintEvaluator
 
 ParserElement.enablePackrat()
 
 
-def generate_column_value(column, fake):
+def extract_numeric_ranges(constraints, col_name):
+    ranges = []
+    for constraint in constraints:
+        # Match patterns like 'column >= value' or 'column <= value'
+        matches = re.findall(
+            r"{}\s*(>=|<=|>|<|=)\s*(\d+(?:\.\d+)?)".format(col_name),
+            constraint)
+        for operator, value in matches:
+            ranges.append((operator, float(value)))
+
+        # Handle BETWEEN clauses
+        between_matches = re.findall(
+            r"{}\s+BETWEEN\s+(\d+(?:\.\d+)?)\s+AND\s+(\d+(?:\.\d+)?)".format(col_name),
+            constraint, re.IGNORECASE)
+        for lower, upper in between_matches:
+            ranges.append(('>=', float(lower)))
+            ranges.append(('<=', float(upper)))
+    return ranges
+
+
+def generate_numeric_value(ranges, col_type):
+    min_value = None
+    max_value = None
+    for operator, value in ranges:
+        if operator == '>':
+            min_value = max(min_value or (value + 1), value + 1)
+        elif operator == '>=':
+            min_value = max(min_value or value, value)
+        elif operator == '<':
+            max_value = min(max_value or (value - 1), value - 1)
+        elif operator == '<=':
+            max_value = min(max_value or value, value)
+        elif operator == '=':
+            min_value = max_value = value
+
+    if min_value is None:
+        min_value = 0
+    if max_value is None:
+        max_value = min_value + 10000  # Arbitrary upper limit
+
+    if 'INT' in col_type or 'DECIMAL' in col_type or 'NUMERIC' in col_type:
+        return random.randint(int(min_value), int(max_value))
+    else:
+        return random.uniform(min_value, max_value)
+
+
+def generate_value_matching_regex(pattern):
+    # Handle escape sequences
+    pattern = pattern.encode('utf-8').decode('unicode_escape')
+    # Generate a matching string
+    try:
+        value = exrex.getone(pattern)
+        return value
+    except Exception as e:
+        print(f"Error generating value for pattern '{pattern}': {e}")
+        return ''
+
+
+def extract_regex_pattern(constraints, col_name):
+    patterns = []
+    for constraint in constraints:
+        matches = re.findall(
+            r"REGEXP_LIKE\s*\(\s*{}\s*,\s*'([^']+)'\s*\)".format(col_name),
+            constraint, re.IGNORECASE)
+        patterns.extend(matches)
+    return patterns
+
+
+def extract_allowed_values(constraints, col_name):
+    allowed_values = []
+    for constraint in constraints:
+        match = re.search(
+            r"{}\s+IN\s*\(([^)]+)\)".format(col_name),
+            constraint, re.IGNORECASE)
+        if match:
+            values = match.group(1)
+            # Split values and strip quotes
+            values = [v.strip().strip("'") for v in values.split(',')]
+            allowed_values.extend(values)
+    return allowed_values
+
+
+def generate_column_value(column, fake, constraints=None):
+    constraints = constraints or []
+    col_name = column['name']
     col_type = column['type'].upper()
+
+    # Check for regex constraints
+    regex_patterns = extract_regex_pattern(constraints, col_name)
+    if regex_patterns:
+        # For simplicity, use the first pattern
+        pattern = regex_patterns[0]
+        return generate_value_matching_regex(pattern)
+
+    # Check for allowed values (IN constraints)
+    allowed_values = extract_allowed_values(constraints, col_name)
+    if allowed_values:
+        return select_allowed_value(allowed_values)
+
+    # Check for numeric ranges
+    numeric_ranges = extract_numeric_ranges(constraints, col_name)
+    if numeric_ranges:
+        return generate_numeric_value(numeric_ranges, col_type)
 
     # Map SQL data types to generic types
     if re.match(r'.*\b(INT|INTEGER|SMALLINT|BIGINT)\b.*', col_type):
         return random.randint(1, 10000)
-    elif re.match(r'.*\b(CHAR|NCHAR|VARCHAR|NVARCHAR|CHARACTER VARYING|TEXT)\b.*', col_type):
-        length_match = re.search(r'\((\d+)\)', col_type)
-        length = int(length_match.group(1)) if length_match else 255
-
-        if length >= 5:
-            # Use fake.text for lengths >= 5
-            return fake.text(max_nb_chars=length)[:length]
-        elif length > 0:
-            # Use fake.lexify for lengths < 5
-            return fake.lexify(text='?' * length)
-        else:
-            # Length is zero or negative; return an empty string
-            return ''
-    elif re.match(r'.*\b(DATE)\b.*', col_type):
-        return fake.date()
-    elif re.match(r'.*\b(TIMESTAMP|DATETIME)\b.*', col_type):
-        return fake.date_time()
-    elif re.match(r'.*\b(TIME)\b.*', col_type):
-        return fake.time()
     elif re.match(r'.*\b(DECIMAL|NUMERIC)\b.*', col_type):
         # Handle decimal and numeric types with precision and scale
         precision, scale = 10, 2  # Default values
@@ -45,6 +129,24 @@ def generate_column_value(column, fake):
         return random.uniform(0, 10000)
     elif re.match(r'.*\b(BOOLEAN|BOOL)\b.*', col_type):
         return random.choice([True, False])
+    elif re.match(r'.*\b(DATE)\b.*', col_type):
+        return fake.date()
+    elif re.match(r'.*\b(TIMESTAMP|DATETIME)\b.*', col_type):
+        return fake.date_time()
+    elif re.match(r'.*\b(TIME)\b.*', col_type):
+        return fake.time()
+    elif re.match(r'.*\b(CHAR|NCHAR|VARCHAR|NVARCHAR|CHARACTER VARYING|TEXT)\b.*', col_type):
+        length_match = re.search(r'\((\d+)\)', col_type)
+        length = int(length_match.group(1)) if length_match else 255
+        if length >= 5:
+            # Use fake.text for lengths >= 5
+            return fake.text(max_nb_chars=length)[:length]
+        elif length > 0:
+            # Use fake.lexify for lengths < 5
+            return fake.lexify(text='?' * length)
+        else:
+            # Length is zero or negative; return an empty string
+            return ''
     else:
         # Default to text for unknown types
         return fake.word()
@@ -175,16 +277,25 @@ class DataGenerator:
     def fill_remaining_columns(self, table, row):
         """
         Fill in the remaining columns of a table row.
-
-        Args:
-            table (str): Table name.
-            row (dict): Row data.
         """
         for column in self.tables[table]['columns']:
             col_name = column['name']
             if col_name in row:
                 continue  # Value already set
-            row[col_name] = generate_column_value(column, self.fake)
+
+            # Collect constraints relevant to this column
+            col_constraints = []
+            # Add column-specific constraints
+            constraints = column.get('constraints', [])
+            col_constraints.extend(constraints)
+
+            # Add table-level check constraints
+            check_constraints = self.tables[table].get('check_constraints', [])
+            for constraint in check_constraints:
+                if col_name in constraint:
+                    col_constraints.append(constraint)
+
+            row[col_name] = generate_column_value(column, self.fake, constraints=col_constraints)
 
     def enforce_not_null_constraints(self, table, row):
         """
@@ -234,10 +345,10 @@ class DataGenerator:
         """
         check_constraints = self.tables[table].get('check_constraints', [])
         for check in check_constraints:
-            max_attempts = 10000
+            max_attempts = 1000
             attempts = 0
             while not self.check_evaluator.evaluate(check, row) and attempts < max_attempts:
-                involved_columns = extract_columns_from_check(check)
+                involved_columns = self.check_evaluator.extract_columns_from_check(check)
                 for col_name in involved_columns:
                     column = self.get_column_info(table, col_name)
                     if column:

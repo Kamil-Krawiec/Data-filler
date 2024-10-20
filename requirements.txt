@@ -5,3 +5,4 @@ sqlparse
 sqlglot
 networkx
 pyparsing
+exrex

@@ -1,8 +1,10 @@
 import re
 from datetime import datetime, date, timedelta
+
 from pyparsing import (
-    ParseResults, Word, alphas, alphanums, nums, oneOf, infixNotation, opAssoc,
-    ParserElement, Keyword, QuotedString, Literal, Forward, Group, ZeroOrMore, Suppress, Optional
+    Word, alphas, alphanums, nums, oneOf, infixNotation, opAssoc,
+    ParserElement, Keyword, QuotedString, Forward, Group, Suppress, Optional, delimitedList,
+    ParseResults
 )
 
 ParserElement.enablePackrat()
@@ -19,9 +21,11 @@ class CheckConstraintEvaluator:
         Returns:
             pyparsing.ParserElement: The parser for expressions.
         """
+        ParserElement.enablePackrat()
+
         integer = Word(nums)
         real = Word(nums + ".")
-        string = QuotedString("'", escChar='\\')
+        string = QuotedString("'", escChar='\\', unquoteResults=False, multiline=True)
         identifier = Word(alphas, alphanums + "_$").setName("identifier")
 
         # Define operators
@@ -32,18 +36,17 @@ class CheckConstraintEvaluator:
 
         lpar = Suppress('(')
         rpar = Suppress(')')
-        comma = Suppress(',')
 
         expr = Forward()
 
         # Function call parsing
         func_call = Group(
-            identifier('func_name') + lpar + Optional(Group(expr + ZeroOrMore(comma + expr)))('args') + rpar
+            identifier('func_name') + lpar + Optional(delimitedList(expr))('args') + rpar
         )
 
         # Atom can be an identifier, number, string, or a function call
         atom = (
-            func_call | real | integer | string | identifier | Group(lpar + expr + rpar)
+                func_call | real | integer | string | identifier | Group(lpar + expr + rpar)
         )
 
         # Define expressions using infix notation
@@ -92,7 +95,7 @@ class CheckConstraintEvaluator:
 
         expr = Forward()
         atom = (
-            real | integer | string | identifier | Group(lpar + expr + rpar)
+                real | integer | string | identifier | Group(lpar + expr + rpar)
         )
 
         expr <<= infixNotation(
@@ -131,9 +134,11 @@ class CheckConstraintEvaluator:
         try:
             # Parse the expression
             parsed_expr = self.expression_parser.parseString(check_expression, parseAll=True)[0]
+            print(f"Parsed Expression: {parsed_expr}")
 
             # Convert parsed expression to Python expression
             python_expr = self.convert_sql_expr_to_python(parsed_expr, row)
+            print(f"Python Expression: {python_expr}")
 
             # Evaluate the expression safely
             safe_globals = {
@@ -147,7 +152,9 @@ class CheckConstraintEvaluator:
             result = eval(python_expr, safe_globals, {})
             return bool(result)
         except Exception as e:
-            # Log the exception for debugging
+            # Log the exception with detailed traceback
+            import traceback
+            traceback.print_exc()
             print(f"Error evaluating check constraint: {e}")
             print(f"Constraint: {check_expression}")
             return False
@@ -182,9 +189,12 @@ class CheckConstraintEvaluator:
                     return str(value)
             elif re.match(r'^\d+(\.\d+)?$', parsed_expr):
                 return parsed_expr
-            else:
-                # Possibly a function name or unrecognized token
+            elif parsed_expr.startswith("'") and parsed_expr.endswith("'"):
+                # It's a string literal with quotes preserved
                 return parsed_expr
+            else:
+                # Possibly an unrecognized token, treat as a string literal
+                return f"'{parsed_expr}'"
         elif isinstance(parsed_expr, ParseResults):
             if 'func_name' in parsed_expr:
                 # Handle function calls
@@ -251,7 +261,9 @@ class CheckConstraintEvaluator:
                 'IN': 'in',
                 'NOT IN': 'not in',
             }
-            python_operator = operator_map.get(operator.upper(), operator)
+            python_operator = operator_map.get(operator.upper())
+            if python_operator is None:
+                raise ValueError(f"Unsupported operator '{operator}'")
             if 'LIKE' in operator.upper():
                 return f"{python_operator}({left}, {right})"
             else:
@@ -297,14 +309,19 @@ class CheckConstraintEvaluator:
         Returns:
             bool: True if the value matches the pattern.
         """
-        # Remove quotes from pattern if present
-        pattern = pattern.strip("'")
-        # Escape backslashes in the pattern
-        pattern = pattern.encode('unicode_escape').decode().replace('\\\\', '\\')
+        # Remove outer quotes from pattern if present
+        if pattern.startswith("'") and pattern.endswith("'"):
+            pattern = pattern[1:-1]
+        # Handle escape sequences
+        pattern = pattern.encode('utf-8').decode('unicode_escape')
         # Ensure value is a string
         if not isinstance(value, str):
             value = str(value)
-        return re.match(pattern, value) is not None
+        try:
+            return re.match(pattern, value) is not None
+        except re.error as e:
+            print(f"Regex error: {e}")
+            return False
 
     def like(self, value, pattern):
         """
