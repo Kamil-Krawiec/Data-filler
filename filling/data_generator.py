@@ -3,9 +3,51 @@ import re
 from datetime import datetime, date, timedelta
 from faker import Faker
 from pyparsing import ParserElement
-from .functions import generate_column_value, create_expression_parser, extract_columns_from_check
+from .check_constraint_evaluator import CheckConstraintEvaluator
 
 ParserElement.enablePackrat()
+
+
+def generate_column_value(column, fake):
+    col_type = column['type'].upper()
+
+    # Map SQL data types to generic types
+    if re.match(r'.*\b(INT|INTEGER|SMALLINT|BIGINT)\b.*', col_type):
+        return random.randint(1, 10000)
+    elif re.match(r'.*\b(CHAR|NCHAR|VARCHAR|NVARCHAR|CHARACTER VARYING|TEXT)\b.*', col_type):
+        length_match = re.search(r'\((\d+)\)', col_type)
+        length = int(length_match.group(1)) if length_match else 255
+
+        if length >= 5:
+            # Use fake.text for lengths >= 5
+            return fake.text(max_nb_chars=length)[:length]
+        elif length > 0:
+            # Use fake.lexify for lengths < 5
+            return fake.lexify(text='?' * length)
+        else:
+            # Length is zero or negative; return an empty string
+            return ''
+    elif re.match(r'.*\b(DATE)\b.*', col_type):
+        return fake.date()
+    elif re.match(r'.*\b(TIMESTAMP|DATETIME)\b.*', col_type):
+        return fake.date_time()
+    elif re.match(r'.*\b(TIME)\b.*', col_type):
+        return fake.time()
+    elif re.match(r'.*\b(DECIMAL|NUMERIC)\b.*', col_type):
+        # Handle decimal and numeric types with precision and scale
+        precision, scale = 10, 2  # Default values
+        match = re.search(r'\((\d+),\s*(\d+)\)', col_type)
+        if match:
+            precision, scale = int(match.group(1)), int(match.group(2))
+        max_value = 10 ** (precision - scale) - 1
+        return round(random.uniform(0, max_value), scale)
+    elif re.match(r'.*\b(FLOAT|REAL|DOUBLE PRECISION|DOUBLE)\b.*', col_type):
+        return random.uniform(0, 10000)
+    elif re.match(r'.*\b(BOOLEAN|BOOL)\b.*', col_type):
+        return random.choice([True, False])
+    else:
+        # Default to text for unknown types
+        return fake.word()
 
 
 class DataGenerator:
@@ -23,10 +65,10 @@ class DataGenerator:
         self.primary_keys = {}
         self.unique_values = {}
         self.predefined_values = {}
-        self.fake = Faker()  # Initialize Faker as a class attribute
+        self.fake = Faker()
         self.table_order = self.resolve_table_order()
         self.initialize_primary_keys()
-        self.expression_parser = create_expression_parser()
+        self.check_evaluator = CheckConstraintEvaluator()
 
     def resolve_table_order(self):
         """
@@ -194,7 +236,7 @@ class DataGenerator:
         for check in check_constraints:
             max_attempts = 10000
             attempts = 0
-            while not self.evaluate_check_constraint(check, row) and attempts < max_attempts:
+            while not self.check_evaluator.evaluate(check, row) and attempts < max_attempts:
                 involved_columns = extract_columns_from_check(check)
                 for col_name in involved_columns:
                     column = self.get_column_info(table, col_name)
@@ -203,126 +245,6 @@ class DataGenerator:
                 attempts += 1
             if attempts == max_attempts:
                 raise ValueError(f"Unable to satisfy CHECK constraint '{check}' in table {table}")
-
-    def evaluate_check_constraint(self, check, row):
-        """
-        Evaluate a CHECK constraint expression.
-
-        Args:
-            check (str): CHECK constraint expression.
-            row (dict): Current row data.
-
-        Returns:
-            bool: True if the constraint is satisfied, False otherwise.
-        """
-        try:
-            # Parse the expression
-            parsed_expr = self.expression_parser.parseString(check, parseAll=True)[0]
-
-            # Convert parsed expression to Python expression
-            python_expr = self.convert_sql_expr_to_python(parsed_expr, row)
-
-            # Evaluate the expression safely
-            safe_globals = {
-                '__builtins__': {},
-                're': re,
-                'datetime': datetime,
-                'date': date,
-                'timedelta': timedelta,
-            }
-            result = eval(python_expr, safe_globals, {})
-            return bool(result)
-        except Exception as e:
-            # Log the exception for debugging
-            print(f"Error evaluating check constraint: {e}")
-            print(f"Constraint: {check}")
-            return False
-
-    def convert_sql_expr_to_python(self, parsed_expr, row):
-        """
-        Convert a parsed SQL expression into a Python expression.
-
-        Args:
-            parsed_expr: The parsed SQL expression.
-            row (dict): Current row data.
-
-        Returns:
-            str: The Python expression.
-        """
-        if isinstance(parsed_expr, str):
-            # It's a variable or a literal
-            if parsed_expr.upper() == 'CURRENT_DATE':
-                return f"datetime.now().date()"
-            elif parsed_expr.upper() in ('TRUE', 'FALSE'):
-                return parsed_expr.capitalize()
-            elif parsed_expr in row:
-                value = row[parsed_expr]
-                if isinstance(value, datetime):
-                    return f"datetime.strptime('{value.strftime('%Y-%m-%d %H:%M:%S')}', '%Y-%m-%d %H:%M:%S')"
-                elif isinstance(value, date):
-                    return f"datetime.strptime('{value.strftime('%Y-%m-%d')}', '%Y-%m-%d').date()"
-                elif isinstance(value, str):
-                    return f"'{value}'"
-                else:
-                    return str(value)
-            elif re.match(r'^\d+(\.\d+)?$', parsed_expr):
-                # It's a numeric literal
-                return parsed_expr
-            else:
-                # Possibly a function name or unrecognized token
-                return parsed_expr
-        elif isinstance(parsed_expr, list):
-            if len(parsed_expr) == 1:
-                return self.convert_sql_expr_to_python(parsed_expr[0], row)
-            else:
-                # Handle function calls
-                if isinstance(parsed_expr[0], str) and parsed_expr[1] == '(':
-                    func_name = parsed_expr[0].upper()
-                    args = parsed_expr[2:-1]  # Exclude opening and closing parentheses
-                    args_expr = ', '.join(self.convert_sql_expr_to_python(arg, row) for arg in args)
-                    # Map SQL functions to Python functions
-                    func_map = {
-                        'EXTRACT': 'lambda field, source: getattr(source, field.lower())',
-                        # Add more function mappings as needed
-                    }
-                    if func_name in func_map:
-                        return f"{func_map[func_name]}({args_expr})"
-                # Handle unary NOT operator
-                if parsed_expr[0].upper() == 'NOT':
-                    operand = self.convert_sql_expr_to_python(parsed_expr[1], row)
-                    return f"not ({operand})"
-                # Handle binary operators
-                left = self.convert_sql_expr_to_python(parsed_expr[0], row)
-                operator = parsed_expr[1]
-                right = self.convert_sql_expr_to_python(parsed_expr[2], row)
-                # Map SQL operators to Python operators
-                operator_map = {
-                    '=': '==',
-                    '<>': '!=',
-                    '!=': '!=',
-                    '>=': '>=',
-                    '<=': '<=',
-                    '>': '>',
-                    '<': '<',
-                    'AND': 'and',
-                    'OR': 'or',
-                    'LIKE': 're.match',
-                    'NOT LIKE': 'not re.match',
-                    'IS': 'is',
-                    'IS NOT': 'is not',
-                    'IN': 'in',
-                    'NOT IN': 'not in',
-                }
-                python_operator = operator_map.get(operator.upper(), operator)
-                if 'LIKE' in operator.upper():
-                    # Handle LIKE operator using regex
-                    pattern = right.strip("'").replace('%', '.*').replace('_', '.')
-                    return f"{python_operator}('^{pattern}$', {left})"
-                else:
-                    return f"({left} {python_operator} {right})"
-        else:
-            # Handle literals (e.g., numbers)
-            return str(parsed_expr)
 
     def get_column_info(self, table, col_name):
         """
