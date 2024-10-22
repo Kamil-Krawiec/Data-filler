@@ -12,10 +12,6 @@ data_generator = DataGenerator(tables_parsed, num_rows=100)
 # Generate the fake data
 fake_data = data_generator.generate_data()
 
-# Pretty-print the generated data
-pp = pprint.PrettyPrinter(indent=4)
-pp.pprint(fake_data)
-
 # Write sql querry to file
 with open("DB_infos/fake_data.sql", "w") as f:
     f.write(data_generator.export_as_sql_insert_query())
