@@ -338,16 +338,20 @@ class DataGenerator:
         valid_rows = []
         deleted_rows = 0
         for row in self.generated_data[table]:
-            if self.is_row_valid(table, row):
+            is_valid, violated_constraint = self.is_row_valid(table, row)
+            if is_valid:
                 valid_rows.append(row)
             else:
                 deleted_rows += 1
-                print(f"[Repair] Row deleted from table '{table}' due to constraint violation: {row}")
+                print(f"[Repair] Row deleted from table '{table}' due to constraint violation:")
+                print(f"    Row data: {row}")
+                print(f"    Violated constraint: {violated_constraint}")
                 # Remove dependent data in child tables
                 self.remove_dependent_data(table, row)
         self.generated_data[table] = valid_rows
         if deleted_rows > 0:
             print(f"[Repair] Deleted {deleted_rows} row(s) from table '{table}' during repair.")
+
     def is_row_valid(self, table, row):
         """
         Check if a row is valid by checking all constraints.
@@ -357,32 +361,33 @@ class DataGenerator:
             row (dict): Row data.
 
         Returns:
-            bool: True if the row is valid, False otherwise.
+            tuple: (is_valid, violated_constraint)
+                is_valid (bool): True if the row is valid, False otherwise.
+                violated_constraint (str): Description of the violated constraint, or None if valid.
         """
-
         # Check NOT NULL constraints
         for column in self.tables[table]['columns']:
             col_name = column['name']
             constraints = column.get('constraints', [])
             if 'NOT NULL' in constraints and row.get(col_name) is None:
-                return False
+                return False, f"NOT NULL constraint on column '{col_name}'"
 
         # Check UNIQUE constraints
         unique_constraints = self.tables[table].get('unique_constraints', [])
         for unique_cols in unique_constraints:
             unique_key = tuple(row.get(col) for col in unique_cols)
-            if unique_key is None or any(val is None for val in unique_key):
-                return False
-            # Note: Since we're repairing after data generation, we assume uniqueness has been enforced
+            if None in unique_key:
+                return False, f"UNIQUE constraint on columns {unique_cols} with NULL values"
+            # Note: Since uniqueness is enforced during data generation, we assume it's valid here
 
         # Check CHECK constraints
         check_constraints = self.tables[table].get('check_constraints', [])
         for check in check_constraints:
             if not self.check_evaluator.evaluate(check, row):
-                return False
+                return False, f"CHECK constraint '{check}' failed"
 
         # All constraints passed
-        return True
+        return True, None
 
     def remove_dependent_data(self, table, row):
         """
