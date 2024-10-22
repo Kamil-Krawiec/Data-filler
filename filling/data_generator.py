@@ -1,182 +1,11 @@
-import random
-import re
 from datetime import datetime, date
-import exrex
+
 from faker import Faker
-from pyparsing import ParserElement
 
 from .check_constraint_evaluator import CheckConstraintEvaluator
+from .helpers import *
 
 ParserElement.enablePackrat()
-
-
-def extract_numeric_ranges(constraints, col_name):
-    ranges = []
-    for constraint in constraints:
-        # Match patterns like 'column >= value' or 'column <= value'
-        matches = re.findall(
-            r"{}\s*(>=|<=|>|<|=)\s*(\d+(?:\.\d+)?)".format(col_name),
-            constraint)
-        for operator, value in matches:
-            ranges.append((operator, float(value)))
-
-        # Handle BETWEEN clauses
-        between_matches = re.findall(
-            r"{}\s+BETWEEN\s+(\d+(?:\.\d+)?)\s+AND\s+(\d+(?:\.\d+)?)".format(col_name),
-            constraint, re.IGNORECASE)
-        for lower, upper in between_matches:
-            ranges.append(('>=', float(lower)))
-            ranges.append(('<=', float(upper)))
-    return ranges
-
-
-def generate_numeric_value(ranges, col_type):
-    min_value = None
-    max_value = None
-    for operator, value in ranges:
-        if operator == '>':
-            min_value = max(min_value or (value + 1), value + 1)
-        elif operator == '>=':
-            min_value = max(min_value or value, value)
-        elif operator == '<':
-            max_value = min(max_value or (value - 1), value - 1)
-        elif operator == '<=':
-            max_value = min(max_value or value, value)
-        elif operator == '=':
-            min_value = max_value = value
-
-    if min_value is None:
-        min_value = 0
-    if max_value is None:
-        max_value = min_value + 10000  # Arbitrary upper limit
-
-    if 'INT' in col_type or 'DECIMAL' in col_type or 'NUMERIC' in col_type:
-        return random.randint(int(min_value), int(max_value))
-    else:
-        return random.uniform(min_value, max_value)
-
-
-def generate_value_matching_regex(pattern):
-    # Handle escape sequences
-    pattern = pattern.encode('utf-8').decode('unicode_escape')
-    # Generate a matching string
-    try:
-        value = exrex.getone(pattern)
-        return value
-    except Exception as e:
-        print(f"Error generating value for pattern '{pattern}': {e}")
-        return ''
-
-
-def extract_regex_pattern(constraints, col_name):
-    patterns = []
-    for constraint in constraints:
-        matches = re.findall(
-            r"REGEXP_LIKE\s*\(\s*{}\s*,\s*'([^']+)'\s*\)".format(col_name),
-            constraint, re.IGNORECASE)
-        patterns.extend(matches)
-    return patterns
-
-
-def extract_allowed_values(constraints, col_name):
-    allowed_values = []
-    for constraint in constraints:
-        match = re.search(
-            r"{}\s+IN\s*\(([^)]+)\)".format(col_name),
-            constraint, re.IGNORECASE)
-        if match:
-            values = match.group(1)
-            # Split values and strip quotes
-            values = [v.strip().strip("'") for v in values.split(',')]
-            allowed_values.extend(values)
-    return allowed_values
-
-
-def generate_column_value(column, fake, constraints=None):
-    constraints = constraints or []
-    col_name = column['name']
-    col_type = column['type'].upper()
-
-    # PREDEFINED VALUES:
-    if col_name in ['sex']:
-        return random.choice(['M', 'F'])
-    if col_name in ['name', 'first_name', 'firstname']:
-        sex = column.get('sex', None)
-        return fake.first_name_male() if sex == 'M' else fake.first_name_female()
-    elif col_name in ['surname', 'last_name', 'lastname']:
-        sex = column.get('sex', None)
-        return fake.last_name_male() if sex == 'M' else fake.last_name_female()
-    elif col_name == 'email':
-        name = column.get('first_name', fake.word())
-        surname = column.get('last_name', fake.word())
-        return f"{name}.{surname}@{fake.free_email_domain()}"
-    elif col_name == 'phone':
-        return fake.phone_number()
-    elif col_name == 'address':
-        return fake.address()
-    elif col_name == 'city':
-        return fake.city()
-    elif col_name == 'country':
-        return fake.country()
-    elif col_name == 'company':
-        return fake.company()
-    elif col_name == 'job_title':
-        # Use predefined values or Faker
-        return fake.job()
-
-    # Check for regex constraints
-    regex_patterns = extract_regex_pattern(constraints, col_name)
-    if regex_patterns:
-        # For simplicity, use the first pattern
-        pattern = regex_patterns[0]
-        return generate_value_matching_regex(pattern)
-
-    # Check for allowed values (IN constraints)
-    allowed_values = extract_allowed_values(constraints, col_name)
-    if allowed_values:
-        return select_allowed_value(allowed_values)
-
-    # Check for numeric ranges
-    numeric_ranges = extract_numeric_ranges(constraints, col_name)
-    if numeric_ranges:
-        return generate_numeric_value(numeric_ranges, col_type)
-
-    # Map SQL data types to generic types
-    if re.match(r'.*\b(INT|INTEGER|SMALLINT|BIGINT)\b.*', col_type):
-        return random.randint(1, 10000)
-    elif re.match(r'.*\b(DECIMAL|NUMERIC)\b.*', col_type):
-        # Handle decimal and numeric types with precision and scale
-        precision, scale = 10, 2  # Default values
-        match = re.search(r'\((\d+),\s*(\d+)\)', col_type)
-        if match:
-            precision, scale = int(match.group(1)), int(match.group(2))
-        max_value = 10 ** (precision - scale) - 1
-        return round(random.uniform(0, max_value), scale)
-    elif re.match(r'.*\b(FLOAT|REAL|DOUBLE PRECISION|DOUBLE)\b.*', col_type):
-        return random.uniform(0, 10000)
-    elif re.match(r'.*\b(BOOLEAN|BOOL)\b.*', col_type):
-        return random.choice([True, False])
-    elif re.match(r'.*\b(DATE)\b.*', col_type):
-        return fake.date()
-    elif re.match(r'.*\b(TIMESTAMP|DATETIME)\b.*', col_type):
-        return fake.date_time()
-    elif re.match(r'.*\b(TIME)\b.*', col_type):
-        return fake.time()
-    elif re.match(r'.*\b(CHAR|NCHAR|VARCHAR|NVARCHAR|CHARACTER VARYING|TEXT)\b.*', col_type):
-        length_match = re.search(r'\((\d+)\)', col_type)
-        length = int(length_match.group(1)) if length_match else 255
-        if length >= 5:
-            # Use fake.text for lengths >= 5
-            return fake.text(max_nb_chars=length)[:length]
-        elif length > 0:
-            # Use fake.lexify for lengths < 5
-            return fake.lexify(text='?' * length)
-        else:
-            # Length is zero or negative; return an empty string
-            return ''
-    else:
-        # Default to text for unknown types
-        return fake.word()
 
 
 class DataGenerator:
@@ -198,6 +27,32 @@ class DataGenerator:
         self.table_order = self.resolve_table_order()
         self.initialize_primary_keys()
         self.check_evaluator = CheckConstraintEvaluator()
+        self.foreign_key_map = self.build_foreign_key_map()
+
+    def build_foreign_key_map(self):
+        """
+        Build a mapping of foreign key relationships for quick lookup.
+
+        Returns:
+            dict: A mapping where each key is a parent table, and the value is a list of child table relationships.
+        """
+        fk_map = {}
+        for table_name, details in self.tables.items():
+            for fk in details.get('foreign_keys', []):
+                parent_table = fk['ref_table']
+                child_table = table_name
+                parent_columns = tuple(fk['ref_columns'])
+                child_columns = tuple(fk['columns'])
+
+                if parent_table not in fk_map:
+                    fk_map[parent_table] = []
+
+                fk_map[parent_table].append({
+                    'child_table': child_table,
+                    'parent_columns': parent_columns,
+                    'child_columns': child_columns,
+                })
+        return fk_map
 
     def resolve_table_order(self):
         """
@@ -409,6 +264,8 @@ class DataGenerator:
         """
         self.generate_initial_data()
         self.enforce_constraints()
+        self.repair_data()
+        self.print_statistics()
         return self.generated_data
 
     def export_as_sql_insert_query(self):
@@ -459,3 +316,122 @@ class DataGenerator:
 
         # Combine all INSERT queries into a single string
         return "\n\n".join(insert_queries)
+
+    # Reparing the data
+
+    def repair_data(self):
+        """
+        Iterate through the data and remove any rows that violate constraints,
+        including cascading deletions to maintain referential integrity.
+        """
+        for table in self.table_order:
+            self.repair_table_data(table)
+
+    def repair_table_data(self, table):
+        """
+        Repair data for a specific table.
+
+        Args:
+            table (str): Table name.
+        """
+        original_row_count = len(self.generated_data[table])
+        valid_rows = []
+        deleted_rows = 0
+        for row in self.generated_data[table]:
+            is_valid, violated_constraint = self.is_row_valid(table, row)
+            if is_valid:
+                valid_rows.append(row)
+            else:
+                deleted_rows += 1
+                print(f"[Repair] Row deleted from table '{table}' due to constraint violation:")
+                print(f"    Row data: {row}")
+                print(f"    Violated constraint: {violated_constraint}")
+                # Remove dependent data in child tables
+                self.remove_dependent_data(table, row)
+        self.generated_data[table] = valid_rows
+        if deleted_rows > 0:
+            print(f"[Repair] Deleted {deleted_rows} row(s) from table '{table}' during repair.")
+
+    def is_row_valid(self, table, row):
+        """
+        Check if a row is valid by checking all constraints.
+
+        Args:
+            table (str): Table name.
+            row (dict): Row data.
+
+        Returns:
+            tuple: (is_valid, violated_constraint)
+                is_valid (bool): True if the row is valid, False otherwise.
+                violated_constraint (str): Description of the violated constraint, or None if valid.
+        """
+        # Check NOT NULL constraints
+        for column in self.tables[table]['columns']:
+            col_name = column['name']
+            constraints = column.get('constraints', [])
+            if 'NOT NULL' in constraints and row.get(col_name) is None:
+                return False, f"NOT NULL constraint on column '{col_name}'"
+
+        # Check UNIQUE constraints
+        unique_constraints = self.tables[table].get('unique_constraints', [])
+        for unique_cols in unique_constraints:
+            unique_key = tuple(row.get(col) for col in unique_cols)
+            if None in unique_key:
+                return False, f"UNIQUE constraint on columns {unique_cols} with NULL values"
+            # Note: Since uniqueness is enforced during data generation, we assume it's valid here
+
+        # Check CHECK constraints
+        check_constraints = self.tables[table].get('check_constraints', [])
+        for check in check_constraints:
+            if not self.check_evaluator.evaluate(check, row):
+                return False, f"CHECK constraint '{check}' failed"
+
+        # All constraints passed
+        return True, None
+
+    def remove_dependent_data(self, table, row):
+        """
+        Recursively remove dependent rows in child tables.
+
+        Args:
+            table (str): Table name where the row is removed.
+            row (dict): The row data that was removed.
+        """
+        if table not in self.foreign_key_map:
+            return
+
+        for fk in self.foreign_key_map[table]:
+            child_table = fk['child_table']
+            parent_columns = fk['parent_columns']
+            child_columns = fk['child_columns']
+
+            # Build a tuple of values to match in child table
+            parent_values = tuple(row.get(col) for col in parent_columns)
+
+            # Filter out rows in child table that reference the removed parent row
+            valid_child_rows = []
+            deleted_rows = 0
+            for child_row in self.generated_data.get(child_table, []):
+                child_values = tuple(child_row.get(col) for col in child_columns)
+                if child_values != parent_values:
+                    valid_child_rows.append(child_row)
+                else:
+                    deleted_rows += 1
+                    print(
+                        f"[Repair] Row deleted from table '{child_table}' due to parent row deletion in '{table}': {child_row}")
+                    # Recursively remove dependent data in lower-level child tables
+                    self.remove_dependent_data(child_table, child_row)
+
+            if deleted_rows > 0:
+                print(
+                    f"[Repair] Deleted {deleted_rows} dependent row(s) from table '{child_table}' due to deletions in '{table}'.")
+            self.generated_data[child_table] = valid_child_rows
+
+    def print_statistics(self):
+        """
+        Print statistics about the generated data.
+        """
+        print("\nData Generation Statistics:")
+        for table in self.table_order:
+            row_count = len(self.generated_data.get(table, []))
+            print(f"Table '{table}': {row_count} row(s) generated.")
