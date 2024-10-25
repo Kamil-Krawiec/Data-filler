@@ -9,25 +9,30 @@ ParserElement.enablePackrat()
 
 
 class DataGenerator:
-    def __init__(self, tables, num_rows=10):
+    def __init__(self, tables, num_rows=10, predefined_values=None, column_type_mappings=None, num_rows_per_table=None):
         """
         Initialize the DataGenerator with table schemas and the number of rows to generate.
 
         Args:
             tables (dict): Parsed table schemas.
-            num_rows (int): Number of rows to generate per table.
+            num_rows (int): Default number of rows to generate per table.
+            predefined_values (dict): Dictionary of predefined values for specific columns.
+            column_type_mappings (dict): Dictionary mapping column names to faker functions or data types.
+            num_rows_per_table (dict): Dictionary specifying the number of rows for each table.
         """
         self.tables = tables
         self.num_rows = num_rows
+        self.num_rows_per_table = num_rows_per_table or {}
         self.generated_data = {}
         self.primary_keys = {}
         self.unique_values = {}
-        self.predefined_values = {}
         self.fake = Faker()
         self.table_order = self.resolve_table_order()
         self.initialize_primary_keys()
         self.check_evaluator = CheckConstraintEvaluator()
         self.foreign_key_map = self.build_foreign_key_map()
+        self.predefined_values = predefined_values or {}
+        self.column_type_mappings = column_type_mappings or {}
 
     def build_foreign_key_map(self):
         """
@@ -99,7 +104,9 @@ class DataGenerator:
         """
         for table in self.table_order:
             self.generated_data[table] = []
-            for _ in range(self.num_rows):
+            # Use the specified number of rows for the table, or default to self.num_rows
+            num_rows = self.num_rows_per_table.get(table, self.num_rows)
+            for _ in range(num_rows):
                 row = {}
                 self.generate_primary_keys(table, row)
                 self.generated_data[table].append(row)
@@ -177,7 +184,7 @@ class DataGenerator:
                 if col_name in constraint:
                     col_constraints.append(constraint)
 
-            row[col_name] = generate_column_value(column, self.fake, constraints=col_constraints)
+            row[col_name] = self.generate_column_value(table, column, row, constraints=col_constraints)
 
     def enforce_not_null_constraints(self, table, row):
         """
@@ -191,7 +198,108 @@ class DataGenerator:
             col_name = column['name']
             constraints = column.get('constraints', [])
             if 'NOT NULL' in constraints and row.get(col_name) is None:
-                row[col_name] = generate_column_value(column, self.fake)
+                row[col_name] = self.generate_column_value(table,column,row,constraints=constraints)
+
+    def generate_column_value(self, table, column, row, constraints=None):
+        """
+        Generate a value for a column based on predefined values, mappings, and constraints.
+
+        Args:
+            table (str): Table name.
+            column (dict): Column schema.
+            row (dict): Current row data.
+            constraints (list): List of constraints relevant to the column.
+
+        Returns:
+            Any: Generated value.
+        """
+        constraints = constraints or []
+        col_name = column['name']
+        col_type = column['type'].upper()
+
+        # Check for predefined values for this column
+        if table in self.predefined_values and col_name in self.predefined_values[table]:
+            predefined_values = self.predefined_values[table][col_name]
+            if isinstance(predefined_values, list):
+                return random.choice(predefined_values)
+            else:
+                return predefined_values
+
+        # Check for column type mappings
+        if col_name in self.column_type_mappings:
+            mapping = self.column_type_mappings[col_name]
+            if callable(mapping):
+                # Use the provided function to generate the value
+                return mapping(self.fake, row)
+            else:
+                # Use faker attribute or fixed value
+                return getattr(self.fake, mapping)() if hasattr(self.fake, mapping) else mapping
+
+        # Check for regex constraints
+        regex_patterns = extract_regex_pattern(constraints, col_name)
+        if regex_patterns:
+            # For simplicity, use the first pattern
+            pattern = regex_patterns[0]
+            return generate_value_matching_regex(pattern)
+
+        # Check for allowed values (IN constraints)
+        allowed_values = extract_allowed_values(constraints, col_name)
+        if allowed_values:
+            return random.choice(allowed_values)
+
+        # Check for numeric ranges
+        numeric_ranges = extract_numeric_ranges(constraints, col_name)
+        if numeric_ranges:
+            return generate_numeric_value(numeric_ranges, col_type)
+
+        # Default data generation based on column type
+        return self.generate_value_based_on_type(col_type)
+
+    def generate_value_based_on_type(self, col_type):
+        """
+        Generate a value based on the SQL data type.
+
+        Args:
+            col_type (str): Column data type.
+
+        Returns:
+            Any: Generated value.
+        """
+        if re.match(r'.*\b(INT|INTEGER|SMALLINT|BIGINT)\b.*', col_type):
+            return random.randint(1, 10000)
+        elif re.match(r'.*\b(DECIMAL|NUMERIC)\b.*', col_type):
+            # Handle decimal and numeric types with precision and scale
+            precision, scale = 10, 2  # Default values
+            match = re.search(r'\((\d+),\s*(\d+)\)', col_type)
+            if match:
+                precision, scale = int(match.group(1)), int(match.group(2))
+            max_value = 10 ** (precision - scale) - 1
+            return round(random.uniform(0, max_value), scale)
+        elif re.match(r'.*\b(FLOAT|REAL|DOUBLE PRECISION|DOUBLE)\b.*', col_type):
+            return random.uniform(0, 10000)
+        elif re.match(r'.*\b(BOOLEAN|BOOL)\b.*', col_type):
+            return random.choice([True, False])
+        elif re.match(r'.*\b(DATE)\b.*', col_type):
+            return self.fake.date()
+        elif re.match(r'.*\b(TIMESTAMP|DATETIME)\b.*', col_type):
+            return self.fake.date_time()
+        elif re.match(r'.*\b(TIME)\b.*', col_type):
+            return self.fake.time()
+        elif re.match(r'.*\b(CHAR|NCHAR|VARCHAR|NVARCHAR|CHARACTER VARYING|TEXT)\b.*', col_type):
+            length_match = re.search(r'\((\d+)\)', col_type)
+            length = int(length_match.group(1)) if length_match else 255
+            if length >= 5:
+                # Use fake.text for lengths >= 5
+                return self.fake.text(max_nb_chars=length)[:length]
+            elif length > 0:
+                # Use fake.lexify for lengths < 5
+                return self.fake.lexify(text='?' * length)
+            else:
+                # Length is zero or negative; return an empty string
+                return ''
+        else:
+            # Default to a random word for unknown types
+            return self.fake.word()
 
     def enforce_unique_constraints(self, table, row):
         """
@@ -210,7 +318,7 @@ class DataGenerator:
             while unique_key in unique_set and attempts < max_attempts:
                 for col in unique_cols:
                     column = self.get_column_info(table, col)
-                    row[col] = generate_column_value(column, self.fake)
+                    row[col] = self.generate_column_value(table, column, row, constraints=unique_constraints)
                 unique_key = tuple(row[col] for col in unique_cols)
                 attempts += 1
             unique_set.add(unique_key)
@@ -234,7 +342,7 @@ class DataGenerator:
                 for col_name in involved_columns:
                     column = self.get_column_info(table, col_name)
                     if column:
-                        row[col_name] = generate_column_value(column, self.fake)
+                        row[col_name] = self.generate_column_value(table, column, row, constraints=check_constraints)
                 attempts += 1
             if attempts == max_attempts:
                 raise ValueError(f"Unable to satisfy CHECK constraint '{check}' in table {table}")
