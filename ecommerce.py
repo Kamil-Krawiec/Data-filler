@@ -12,7 +12,7 @@ predefined_values = {
     'Products': {
         'product_name': [
             'Laptop', 'Smartphone', 'Headphones', 'Camera', 'Tablet',
-            'Smartwatch', 'Printer', 'Monitor', 'Keyboard', 'Mouse'
+            'Smartwatch', 'Printer', 'Monitor', 'Keyboard', 'Mouse',
         ]
     },
     'Suppliers': {
@@ -38,7 +38,7 @@ column_type_mappings = {
 
 # Specify the number of rows to generate for each table
 num_rows_per_table = {
-    'Customers': 100,
+    'Customers': 1000,
     'Products': 10,
     'Orders': 200,
     'OrderItems': 500,
