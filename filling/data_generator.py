@@ -9,19 +9,22 @@ ParserElement.enablePackrat()
 
 
 class DataGenerator:
-    def __init__(self, tables, num_rows=10, predefined_values=None, column_type_mappings=None, num_rows_per_table=None):
+    def __init__(self, tables, num_rows=10, max_attempts=100, predefined_values=None, column_type_mappings=None,
+                 num_rows_per_table=None):
         """
         Initialize the DataGenerator with table schemas and the number of rows to generate.
 
         Args:
             tables (dict): Parsed table schemas.
             num_rows (int): Default number of rows to generate per table.
+            max_attempts (int): Maximum number of attempts to generate a unique value for a column.
             predefined_values (dict): Dictionary of predefined values for specific columns.
             column_type_mappings (dict): Dictionary mapping column names to faker functions or data types.
             num_rows_per_table (dict): Dictionary specifying the number of rows for each table.
         """
         self.tables = tables
         self.num_rows = num_rows
+        self.max_attempts = max_attempts
         self.num_rows_per_table = num_rows_per_table or {}
         self.generated_data = {}
         self.primary_keys = {}
@@ -130,7 +133,11 @@ class DataGenerator:
         """
         for table in self.table_order:
             self.unique_values[table] = {}
-            unique_constraints = self.tables[table].get('unique_constraints', [])
+            unique_constraints = self.tables[table].get('unique_constraints', []).copy()
+            # Include primary keys in unique constraints
+            primary_key = self.tables[table].get('primary_key', [])
+            if primary_key:
+                unique_constraints.append(primary_key)
             for unique_cols in unique_constraints:
                 self.unique_values[table][tuple(unique_cols)] = set()
 
@@ -198,7 +205,7 @@ class DataGenerator:
             col_name = column['name']
             constraints = column.get('constraints', [])
             if 'NOT NULL' in constraints and row.get(col_name) is None:
-                row[col_name] = self.generate_column_value(table,column,row,constraints=constraints)
+                row[col_name] = self.generate_column_value(table, column, row, constraints=constraints)
 
     def generate_column_value(self, table, column, row, constraints=None):
         """
@@ -304,25 +311,34 @@ class DataGenerator:
     def enforce_unique_constraints(self, table, row):
         """
         Enforce unique constraints on a table row.
-
-        Args:
-            table (str): Table name.
-            row (dict): Row data.
         """
-        unique_constraints = self.tables[table].get('unique_constraints', [])
+
+        def is_foreign_key_column(table_p, col_name):
+            fks = self.tables[table_p].get('foreign_keys', [])
+            for fk in fks:
+                if col_name in fk['columns']:
+                    return True
+            return False
+
+        unique_constraints = self.tables[table].get('unique_constraints', []).copy()
+        primary_key = self.tables[table].get('primary_key', [])
+        if primary_key:
+            unique_constraints.append(primary_key)
         for unique_cols in unique_constraints:
             unique_key = tuple(row[col] for col in unique_cols)
             unique_set = self.unique_values[table][tuple(unique_cols)]
-            max_attempts = 100
             attempts = 0
-            while unique_key in unique_set and attempts < max_attempts:
+            while unique_key in unique_set and attempts < self.max_attempts:
                 for col in unique_cols:
+                    # Do not modify foreign key columns
+                    if is_foreign_key_column(table, col):
+                        continue
                     column = self.get_column_info(table, col)
                     row[col] = self.generate_column_value(table, column, row, constraints=unique_constraints)
                 unique_key = tuple(row[col] for col in unique_cols)
                 attempts += 1
             unique_set.add(unique_key)
-            if attempts == max_attempts:
+            if attempts == self.max_attempts:
                 raise ValueError(f"Unable to generate unique value for columns {unique_cols} in table {table}")
 
     def enforce_check_constraints(self, table, row):
@@ -335,16 +351,15 @@ class DataGenerator:
         """
         check_constraints = self.tables[table].get('check_constraints', [])
         for check in check_constraints:
-            max_attempts = 1000
             attempts = 0
-            while not self.check_evaluator.evaluate(check, row) and attempts < max_attempts:
+            while not self.check_evaluator.evaluate(check, row) and attempts < self.max_attempts:
                 involved_columns = self.check_evaluator.extract_columns_from_check(check)
                 for col_name in involved_columns:
                     column = self.get_column_info(table, col_name)
                     if column:
                         row[col_name] = self.generate_column_value(table, column, row, constraints=check_constraints)
                 attempts += 1
-            if attempts == max_attempts:
+            if attempts == self.max_attempts:
                 raise ValueError(f"Unable to satisfy CHECK constraint '{check}' in table {table}")
 
     def get_column_info(self, table, col_name):

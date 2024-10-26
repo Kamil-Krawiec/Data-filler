@@ -137,6 +137,10 @@ def parse_create_tables(sql_script):
                     if isinstance(first_expr, UniqueColumnConstraint):
                         unique_columns = [col.name for col in first_expr.this.expressions]
                         table_unique_constraints.append(unique_columns)
+                    elif isinstance(first_expr, PrimaryKey):
+                        # Handle PRIMARY KEY constraints
+                        pk_columns = [col.name for col in first_expr.expressions]
+                        table_primary_key.extend(pk_columns)
                     elif isinstance(first_expr, ForeignKey):
                         fk_columns = [col.name for col in first_expr.expressions]
                         references = first_expr.args.get("reference")
