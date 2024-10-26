@@ -63,6 +63,7 @@ def parse_create_tables(sql_script):
                         if isinstance(constraint.kind, PrimaryKeyColumnConstraint):
                             table_primary_key.append(col_name)
                             column_info["constraints"].append("PRIMARY KEY")
+                            table_unique_constraints.append([col_name])  # Added line
                         elif isinstance(constraint.kind, UniqueColumnConstraint):
                             table_unique_constraints.append([col_name])
                             column_info["constraints"].append("UNIQUE")
@@ -128,6 +129,7 @@ def parse_create_tables(sql_script):
                     # Handle table-level primary keys
                     pk_columns = [col.name for col in expression.expressions]
                     table_primary_key.extend(pk_columns)
+                    table_unique_constraints.append(pk_columns)  # Added line
 
                 elif isinstance(expression, Constraint):
                     # Handle table-level constraints
@@ -141,6 +143,7 @@ def parse_create_tables(sql_script):
                         # Handle PRIMARY KEY constraints
                         pk_columns = [col.name for col in first_expr.expressions]
                         table_primary_key.extend(pk_columns)
+                        table_unique_constraints.append(pk_columns)  # Added line
                     elif isinstance(first_expr, ForeignKey):
                         fk_columns = [col.name for col in first_expr.expressions]
                         references = first_expr.args.get("reference")
