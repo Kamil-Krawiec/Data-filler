@@ -1,4 +1,8 @@
 pandas==2.2.3
 numpy==2.1.2
 Faker==30.3.0
-
+sqlparse
+sqlglot
+networkx
+pyparsing
+exrex
