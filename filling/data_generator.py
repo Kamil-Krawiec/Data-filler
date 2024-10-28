@@ -8,6 +8,9 @@ ParserElement.enablePackrat()
 
 
 class DataGenerator:
+    """
+    A class to generate synthetic data for database tables based on provided schemas and constraints.
+    """
     def __init__(self, tables, num_rows=10, max_attempts=100, predefined_values=None, column_type_mappings=None,
                  num_rows_per_table=None):
         """
@@ -356,6 +359,16 @@ class DataGenerator:
             return self.fake.word()
 
     def is_foreign_key_column(self, table_p, col_name):
+        """
+        Check if a column is a foreign key in the specified table.
+
+        Args:
+            table_p (str): Table name.
+            col_name (str): Column name.
+
+        Returns:
+            bool: True if the column is a foreign key, False otherwise.
+        """
         fks = self.tables[table_p].get('foreign_keys', [])
         for fk in fks:
             if col_name in fk['columns']:
@@ -479,8 +492,6 @@ class DataGenerator:
 
         # Combine all INSERT queries into a single string
         return "\n\n".join(insert_queries)
-
-    # Reparing the data
 
     def repair_data(self):
         """

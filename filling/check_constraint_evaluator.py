@@ -11,7 +11,13 @@ ParserElement.enablePackrat()
 
 
 class CheckConstraintEvaluator:
+    """
+    A class to evaluate SQL CHECK constraints on row data.
+    """
     def __init__(self):
+        """
+        Initialize the CheckConstraintEvaluator and set up the expression parser.
+        """
         self.expression_parser = self._create_expression_parser()
 
     def _create_expression_parser(self):
@@ -237,6 +243,16 @@ class CheckConstraintEvaluator:
             return self.handle_operator(parsed_expr, row)
 
     def handle_operator(self, parsed_expr, row):
+        """
+        Handle the conversion of parsed expressions containing operators to Python expressions.
+
+        Args:
+            parsed_expr: The parsed SQL expression containing operators.
+            row (dict): Current row data.
+
+        Returns:
+            str: The converted Python expression.
+        """
         if len(parsed_expr) == 2:
             # Unary operator
             operator = parsed_expr[0]

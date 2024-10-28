@@ -8,6 +8,16 @@ ParserElement.enablePackrat()
 
 
 def extract_numeric_ranges(constraints, col_name):
+    """
+    Extract numeric ranges from constraints related to a specific column.
+
+    Args:
+        constraints (list): List of constraint expressions.
+        col_name (str): Name of the column to extract ranges for.
+
+    Returns:
+        list: A list of tuples representing operators and their corresponding numeric values.
+    """
     ranges = []
     for constraint in constraints:
         # Match patterns like 'column >= value' or 'column <= value'
@@ -28,6 +38,16 @@ def extract_numeric_ranges(constraints, col_name):
 
 
 def generate_numeric_value(ranges, col_type):
+    """
+    Generate a numeric value based on specified ranges and column type.
+
+    Args:
+        ranges (list): A list of tuples representing numeric ranges and their operators.
+        col_type (str): The data type of the column.
+
+    Returns:
+        int or float: A randomly generated numeric value within the specified range.
+    """
     min_value = None
     max_value = None
     for operator, value in ranges:
@@ -54,6 +74,15 @@ def generate_numeric_value(ranges, col_type):
 
 
 def generate_value_matching_regex(pattern):
+    """
+    Generate a value that matches a specified regex pattern.
+
+    Args:
+        pattern (str): The regex pattern to match.
+
+    Returns:
+        str: A randomly generated string that matches the given regex pattern.
+    """
     # Handle escape sequences
     pattern = pattern.encode('utf-8').decode('unicode_escape')
     # Generate a matching string
@@ -66,6 +95,16 @@ def generate_value_matching_regex(pattern):
 
 
 def extract_regex_pattern(constraints, col_name):
+    """
+    Extract regex patterns from constraints related to a specific column.
+
+    Args:
+        constraints (list): List of constraint expressions.
+        col_name (str): Name of the column to extract regex patterns for.
+
+    Returns:
+        list: A list of regex patterns found in the constraints.
+    """
     patterns = []
     for constraint in constraints:
         matches = re.findall(
@@ -76,6 +115,16 @@ def extract_regex_pattern(constraints, col_name):
 
 
 def extract_allowed_values(constraints, col_name):
+    """
+    Extract allowed values from constraints related to a specific column.
+
+    Args:
+        constraints (list): List of constraint expressions.
+        col_name (str): Name of the column to extract allowed values for.
+
+    Returns:
+        list: A list of allowed values specified in the constraints.
+    """
     allowed_values = []
     for constraint in constraints:
         match = re.search(
