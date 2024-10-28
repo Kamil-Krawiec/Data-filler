@@ -1,7 +1,6 @@
 from datetime import datetime, date
-
+import itertools
 from faker import Faker
-
 from .check_constraint_evaluator import CheckConstraintEvaluator
 from .helpers import *
 
@@ -9,19 +8,22 @@ ParserElement.enablePackrat()
 
 
 class DataGenerator:
-    def __init__(self, tables, num_rows=10, predefined_values=None, column_type_mappings=None, num_rows_per_table=None):
+    def __init__(self, tables, num_rows=10, max_attempts=100, predefined_values=None, column_type_mappings=None,
+                 num_rows_per_table=None):
         """
         Initialize the DataGenerator with table schemas and the number of rows to generate.
 
         Args:
             tables (dict): Parsed table schemas.
             num_rows (int): Default number of rows to generate per table.
+            max_attempts (int): Maximum number of attempts to generate a unique value for a column.
             predefined_values (dict): Dictionary of predefined values for specific columns.
             column_type_mappings (dict): Dictionary mapping column names to faker functions or data types.
             num_rows_per_table (dict): Dictionary specifying the number of rows for each table.
         """
         self.tables = tables
         self.num_rows = num_rows
+        self.max_attempts = max_attempts
         self.num_rows_per_table = num_rows_per_table or {}
         self.generated_data = {}
         self.primary_keys = {}
@@ -104,12 +106,57 @@ class DataGenerator:
         """
         for table in self.table_order:
             self.generated_data[table] = []
-            # Use the specified number of rows for the table, or default to self.num_rows
             num_rows = self.num_rows_per_table.get(table, self.num_rows)
-            for _ in range(num_rows):
-                row = {}
-                self.generate_primary_keys(table, row)
-                self.generated_data[table].append(row)
+            pk_columns = self.tables[table].get('primary_key', [])
+            if len(pk_columns) == 1:
+                for _ in range(num_rows):
+                    row = {}
+                    self.generate_primary_keys(table, row)
+                    self.generated_data[table].append(row)
+            else:
+                # Composite primary key; generate combinations
+                self.generate_composite_primary_keys(table, num_rows)
+
+    def generate_composite_primary_keys(self, table, num_rows):
+        """
+        Generate data for a table with a composite primary key.
+
+        Args:
+            table (str): Table name.
+            num_rows (int): Number of rows to generate.
+        """
+        pk_columns = self.tables[table]['primary_key']
+
+        # Generate possible values for each primary key column
+        pk_values = {}
+        for pk in pk_columns:
+            # If the primary key column is a foreign key, get values from the referenced table
+            if self.is_foreign_key_column(table, pk):
+                fk = next((fk for fk in self.tables[table]['foreign_keys'] if pk in fk['columns']), None)
+                ref_table = fk['ref_table']
+                ref_column = fk['ref_columns'][fk['columns'].index(pk)]
+                pk_values[pk] = [row[ref_column] for row in self.generated_data[ref_table]]
+            else:
+                # Generate a range of values for the primary key column
+                pk_values[pk] = list(range(1, num_rows + 1))
+
+        # Generate all possible combinations of primary key values
+        combinations = list(itertools.product(*(pk_values[pk] for pk in pk_columns)))
+        random.shuffle(combinations)
+
+        # Adjust the number of rows if not enough unique combinations
+        max_possible_rows = len(combinations)
+        if max_possible_rows < num_rows:
+            print(
+                f"Not enough unique combinations for composite primary key in table '{table}'. Adjusting number of rows to {max_possible_rows}.")
+            num_rows = max_possible_rows
+
+        # Generate rows using the unique combinations
+        for i in range(num_rows):
+            row = {}
+            for idx, pk in enumerate(pk_columns):
+                row[pk] = combinations[i][idx]
+            self.generated_data[table].append(row)
 
     def generate_primary_keys(self, table, row):
         """
@@ -130,7 +177,11 @@ class DataGenerator:
         """
         for table in self.table_order:
             self.unique_values[table] = {}
-            unique_constraints = self.tables[table].get('unique_constraints', [])
+            unique_constraints = self.tables[table].get('unique_constraints', []).copy()
+            # Include primary keys in unique constraints
+            primary_key = self.tables[table].get('primary_key', [])
+            if primary_key:
+                unique_constraints.append(primary_key)
             for unique_cols in unique_constraints:
                 self.unique_values[table][tuple(unique_cols)] = set()
 
@@ -155,6 +206,9 @@ class DataGenerator:
             ref_table = fk['ref_table']
             ref_columns = fk['ref_columns']
             if ref_table in self.generated_data and ref_columns:
+                # Skip assigning if FK columns are already set (e.g., in composite PKs)
+                if all(col in row for col in fk_columns):
+                    continue
                 ref_record = random.choice(self.generated_data[ref_table])
                 for idx, fk_col in enumerate(fk_columns):
                     ref_col = ref_columns[idx]
@@ -198,7 +252,7 @@ class DataGenerator:
             col_name = column['name']
             constraints = column.get('constraints', [])
             if 'NOT NULL' in constraints and row.get(col_name) is None:
-                row[col_name] = self.generate_column_value(table,column,row,constraints=constraints)
+                row[col_name] = self.generate_column_value(table, column, row, constraints=constraints)
 
     def generate_column_value(self, table, column, row, constraints=None):
         """
@@ -301,29 +355,33 @@ class DataGenerator:
             # Default to a random word for unknown types
             return self.fake.word()
 
+    def is_foreign_key_column(self, table_p, col_name):
+        fks = self.tables[table_p].get('foreign_keys', [])
+        for fk in fks:
+            if col_name in fk['columns']:
+                return True
+        return False
+
     def enforce_unique_constraints(self, table, row):
         """
         Enforce unique constraints on a table row.
-
-        Args:
-            table (str): Table name.
-            row (dict): Row data.
         """
-        unique_constraints = self.tables[table].get('unique_constraints', [])
+
+        unique_constraints = self.tables[table].get('unique_constraints', []).copy()
         for unique_cols in unique_constraints:
             unique_key = tuple(row[col] for col in unique_cols)
             unique_set = self.unique_values[table][tuple(unique_cols)]
-            max_attempts = 100
             attempts = 0
-            while unique_key in unique_set and attempts < max_attempts:
+            while unique_key in unique_set and attempts < self.max_attempts:
                 for col in unique_cols:
+                    # Do not modify foreign key columns
+                    if self.is_foreign_key_column(table, col):
+                        continue
                     column = self.get_column_info(table, col)
                     row[col] = self.generate_column_value(table, column, row, constraints=unique_constraints)
                 unique_key = tuple(row[col] for col in unique_cols)
                 attempts += 1
             unique_set.add(unique_key)
-            if attempts == max_attempts:
-                raise ValueError(f"Unable to generate unique value for columns {unique_cols} in table {table}")
 
     def enforce_check_constraints(self, table, row):
         """
@@ -335,17 +393,14 @@ class DataGenerator:
         """
         check_constraints = self.tables[table].get('check_constraints', [])
         for check in check_constraints:
-            max_attempts = 1000
             attempts = 0
-            while not self.check_evaluator.evaluate(check, row) and attempts < max_attempts:
+            while not self.check_evaluator.evaluate(check, row) and attempts < self.max_attempts:
                 involved_columns = self.check_evaluator.extract_columns_from_check(check)
                 for col_name in involved_columns:
                     column = self.get_column_info(table, col_name)
                     if column:
                         row[col_name] = self.generate_column_value(table, column, row, constraints=check_constraints)
                 attempts += 1
-            if attempts == max_attempts:
-                raise ValueError(f"Unable to satisfy CHECK constraint '{check}' in table {table}")
 
     def get_column_info(self, table, col_name):
         """
@@ -442,7 +497,6 @@ class DataGenerator:
         Args:
             table (str): Table name.
         """
-        original_row_count = len(self.generated_data[table])
         valid_rows = []
         deleted_rows = 0
         for row in self.generated_data[table]:
