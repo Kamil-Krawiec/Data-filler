@@ -229,10 +229,11 @@ class DataGenerator:
         """
         Fill in the remaining columns of a table row.
         """
-        for column in self.tables[table]['columns']:
+        columns = self.tables[table]['columns']
+        for column in columns:
             col_name = column['name']
             if col_name in row:
-                continue  # Value already set
+                continue  # Skip columns that are already generated
 
             # Collect constraints relevant to this column
             col_constraints = []
@@ -246,6 +247,7 @@ class DataGenerator:
                 if col_name in constraint:
                     col_constraints.append(constraint)
 
+            # Generate the column value
             row[col_name] = self.generate_column_value(table, column, row, constraints=col_constraints)
 
     def enforce_not_null_constraints(self, table, row):
@@ -263,39 +265,42 @@ class DataGenerator:
                 row[col_name] = self.generate_column_value(table, column, row, constraints=constraints)
 
     def generate_column_value(self, table, column, row, constraints=None):
-        """
-        Generate a value for a column based on predefined values, mappings, and constraints.
-
-        Args:
-            table (str): Table name.
-            column (dict): Column schema.
-            row (dict): Current row data.
-            constraints (list): List of constraints relevant to the column.
-
-        Returns:
-            Any: Generated value.
-        """
         constraints = constraints or []
         col_name = column['name']
         col_type = column['type'].upper()
 
-        # Check for predefined values for this column
+        # Check for per-table predefined values
+        predefined_values = None
         if table in self.predefined_values and col_name in self.predefined_values[table]:
             predefined_values = self.predefined_values[table][col_name]
+        elif 'global' in self.predefined_values and col_name in self.predefined_values['global']:
+            predefined_values = self.predefined_values['global'][col_name]
+
+        if predefined_values is not None:
             if isinstance(predefined_values, list):
                 return random.choice(predefined_values)
             else:
                 return predefined_values
 
-        # Check for column type mappings
-        if col_name in self.column_type_mappings:
-            mapping = self.column_type_mappings[col_name]
-            if callable(mapping):
-                # Use the provided function to generate the value
-                return mapping(self.fake, row)
+        # Check for per-table column type mappings
+        mapping_entry = None
+        if table in self.column_type_mappings and col_name in self.column_type_mappings[table]:
+            mapping_entry = self.column_type_mappings[table][col_name]
+        elif 'global' in self.column_type_mappings and col_name in self.column_type_mappings['global']:
+            mapping_entry = self.column_type_mappings['global'][col_name]
+
+        if mapping_entry:
+            if isinstance(mapping_entry, dict):
+                generator = mapping_entry.get('generator')
+                if callable(generator):
+                    return generator(self.fake, row)
+                else:
+                    return generator
+            elif callable(mapping_entry):
+                return mapping_entry(self.fake, row)
             else:
                 # Use faker attribute or fixed value
-                return getattr(self.fake, mapping)() if hasattr(self.fake, mapping) else mapping
+                return getattr(self.fake, mapping_entry)() if hasattr(self.fake, mapping_entry) else mapping_entry
 
         # Check for regex constraints
         regex_patterns = extract_regex_pattern(constraints, col_name)
