@@ -15,11 +15,12 @@ class CheckConstraintEvaluator:
     A class to evaluate SQL CHECK constraints on row data.
     """
 
-    def __init__(self):
+    def __init__(self, schema_columns=None):
         """
         Initialize the CheckConstraintEvaluator and set up the expression parser.
         """
         self.expression_parser = self._create_expression_parser()
+        self.schema_columns = schema_columns or []
 
     def _create_expression_parser(self):
         ParserElement.enablePackrat()
@@ -115,7 +116,7 @@ class CheckConstraintEvaluator:
                 # Handle binary expressions
                 if isinstance(left, str):
                     col_name = left
-                    value = self._evaluate_literal(right)
+                    value = self._evaluate_literal(right, treat_as_identifier=True)
                     condition = {'operator': operator, 'value': value}
                     if col_name not in conditions:
                         conditions[col_name] = []
@@ -126,13 +127,9 @@ class CheckConstraintEvaluator:
                     right_conditions = self._extract_conditions_recursive(right)
                     # Combine conditions
                     for col, conds in left_conditions.items():
-                        if col not in conditions:
-                            conditions[col] = []
-                        conditions[col].extend(conds)
+                        conditions.setdefault(col, []).extend(conds)
                     for col, conds in right_conditions.items():
-                        if col not in conditions:
-                            conditions[col] = []
-                        conditions[col].extend(conds)
+                        conditions.setdefault(col, []).extend(conds)
             elif len(parsed_expr) == 2:
                 # Unary operator
                 operator = parsed_expr[0].upper()
@@ -150,17 +147,16 @@ class CheckConstraintEvaluator:
                 for elem in parsed_expr:
                     elem_conditions = self._extract_conditions_recursive(elem)
                     for col, conds in elem_conditions.items():
-                        if col not in conditions:
-                            conditions[col] = []
-                        conditions[col].extend(conds)
+                        conditions.setdefault(col, []).extend(conds)
         return conditions
 
-    def _evaluate_literal(self, value):
+    def _evaluate_literal(self, value, treat_as_identifier=False):
         """
-        Evaluate a literal value from the parsed expression.
+        Evaluate a literal value from the parsed expression, including function calls.
 
         Args:
             value: The parsed value.
+            treat_as_identifier (bool): Whether to treat the value as an identifier (column name).
 
         Returns:
             The evaluated literal value.
@@ -176,25 +172,25 @@ class CheckConstraintEvaluator:
                     arg = self._evaluate_literal(value['args'])
                     return self.date_func(arg)
                 else:
-                    # Handle other functions as needed
                     raise ValueError(f"Unsupported function '{func_name}' in CHECK constraint")
             else:
                 # If it's a nested expression, evaluate it recursively
-                return self._evaluate_literal(value[0])
+                return self._evaluate_literal(value[0], treat_as_identifier)
         elif isinstance(value, str):
             token = value.upper()
-            if token.startswith("'") and token.endswith("'"):
+            if treat_as_identifier and (value in self.schema_columns or token in self.schema_columns):
+                return value  # Return the column name as is
+            elif token == 'CURRENT_DATE':
+                return date.today()
+            elif value.startswith("'") and value.endswith("'"):
                 return value.strip("'")
             elif re.match(r'^\d+(\.\d+)?$', value):
                 if '.' in value:
                     return float(value)
                 else:
                     return int(value)
-            elif token == 'CURRENT_DATE':
-                return date.today()
             else:
-                # Could be an identifier or unrecognized token
-                return value
+                return value  # Return the identifier or unrecognized token
         else:
             return value
 
