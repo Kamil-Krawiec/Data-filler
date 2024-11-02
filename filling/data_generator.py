@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import itertools
 from faker import Faker
 from .check_constraint_evaluator import CheckConstraintEvaluator
@@ -11,7 +11,7 @@ class DataGenerator:
     """
     A class to generate synthetic data for database tables based on provided schemas and constraints.
     """
-    def __init__(self, tables, num_rows=10, max_attempts=100, predefined_values=None, column_type_mappings=None,
+    def __init__(self, tables, num_rows=10, predefined_values=None, column_type_mappings=None,
                  num_rows_per_table=None):
         """
         Initialize the DataGenerator with table schemas and the number of rows to generate.
@@ -19,14 +19,12 @@ class DataGenerator:
         Args:
             tables (dict): Parsed table schemas.
             num_rows (int): Default number of rows to generate per table.
-            max_attempts (int): Maximum number of attempts to generate a unique value for a column.
             predefined_values (dict): Dictionary of predefined values for specific columns.
             column_type_mappings (dict): Dictionary mapping column names to faker functions or data types.
             num_rows_per_table (dict): Dictionary specifying the number of rows for each table.
         """
         self.tables = tables
         self.num_rows = num_rows
-        self.max_attempts = max_attempts
         self.num_rows_per_table = num_rows_per_table or {}
         self.generated_data = {}
         self.primary_keys = {}
@@ -34,7 +32,7 @@ class DataGenerator:
         self.fake = Faker()
         self.table_order = self.resolve_table_order()
         self.initialize_primary_keys()
-        self.check_evaluator = CheckConstraintEvaluator()
+        self.check_evaluator = CheckConstraintEvaluator(schema_columns=self.get_all_column_names())
         self.foreign_key_map = self.build_foreign_key_map()
         self.predefined_values = predefined_values or {}
         self.column_type_mappings = column_type_mappings or {}
@@ -63,6 +61,13 @@ class DataGenerator:
                     'child_columns': child_columns,
                 })
         return fk_map
+
+    def get_all_column_names(self):
+        columns = set()
+        for table in self.tables.values():
+            for column in table['columns']:
+                columns.add(column['name'])
+        return list(columns)
 
     def resolve_table_order(self):
         """
@@ -337,7 +342,7 @@ class DataGenerator:
         elif re.match(r'.*\b(BOOLEAN|BOOL)\b.*', col_type):
             return random.choice([True, False])
         elif re.match(r'.*\b(DATE)\b.*', col_type):
-            return self.fake.date()
+            return self.fake.date_object()
         elif re.match(r'.*\b(TIMESTAMP|DATETIME)\b.*', col_type):
             return self.fake.date_time()
         elif re.match(r'.*\b(TIME)\b.*', col_type):
@@ -384,8 +389,7 @@ class DataGenerator:
         for unique_cols in unique_constraints:
             unique_key = tuple(row[col] for col in unique_cols)
             unique_set = self.unique_values[table][tuple(unique_cols)]
-            attempts = 0
-            while unique_key in unique_set and attempts < self.max_attempts:
+            while unique_key in unique_set:
                 for col in unique_cols:
                     # Do not modify foreign key columns
                     if self.is_foreign_key_column(table, col):
@@ -393,7 +397,6 @@ class DataGenerator:
                     column = self.get_column_info(table, col)
                     row[col] = self.generate_column_value(table, column, row, constraints=unique_constraints)
                 unique_key = tuple(row[col] for col in unique_cols)
-                attempts += 1
             unique_set.add(unique_key)
 
     def enforce_check_constraints(self, table, row):
@@ -406,15 +409,88 @@ class DataGenerator:
         """
         check_constraints = self.tables[table].get('check_constraints', [])
         for check in check_constraints:
-            attempts = 0
-            while not self.check_evaluator.evaluate(check, row) and attempts < self.max_attempts:
-                involved_columns = self.check_evaluator.extract_columns_from_check(check)
-                for col_name in involved_columns:
+            conditions = self.check_evaluator.extract_conditions(check)
+            while not self.check_evaluator.evaluate(check, row):
+                for col_name, conds in conditions.items():
                     column = self.get_column_info(table, col_name)
                     if column:
-                        row[col_name] = self.generate_column_value(table, column, row, constraints=check_constraints)
-                attempts += 1
+                        row[col_name] = self.generate_value_based_on_conditions(row, column, conds)
 
+    def generate_value_based_on_conditions(self, row, column, conditions):
+
+        col_type = column['type'].upper()
+        min_value = None
+        max_value = None
+        other_column_conditions = []
+
+        for condition in conditions:
+            operator = condition['operator']
+            value = condition['value']
+            if isinstance(value, (int, float, date)):
+                if operator in ('>=', '>'):
+                    min_candidate = value + (1 if operator == '>' else 0)
+                    min_value = max(min_value, min_candidate) if min_value is not None else min_candidate
+                elif operator in ('<=', '<'):
+                    max_candidate = value - (1 if operator == '<' else 0)
+                    max_value = min(max_value, max_candidate) if max_value is not None else max_candidate
+            elif isinstance(value, str) and value in self.get_all_column_names():
+                # It's another column
+                other_column_conditions.append((operator, value))
+            else:
+                # Handle other types if necessary
+                pass
+
+        # Generate initial value based on min and max
+        if 'INT' in col_type or 'DECIMAL' in col_type or 'NUMERIC' in col_type:
+            min_value = min_value if min_value is not None else 1
+            max_value = max_value if max_value is not None else 10000
+            generated_value = random.randint(int(min_value), int(max_value))
+        elif 'DATE' in col_type:
+            min_date = min_value if isinstance(min_value, date) else date(1900, 1, 1)
+            max_date = max_value if isinstance(max_value, date) else date.today()
+            delta = (max_date - min_date).days
+            random_days = random.randint(0, delta)
+            generated_value = min_date + timedelta(days=random_days)
+        else:
+            # Default generation for other types
+            generated_value = self.generate_value_based_on_type(col_type)
+
+        # Adjust the generated value to satisfy conditions involving other columns
+        for operator, other_col in other_column_conditions:
+            other_value = row.get(other_col)
+            if other_value is None:
+                # Generate the other column value first
+                other_column_info = self.get_column_info(column['table'], other_col)
+                if other_column_info:
+                    row[other_col] = self.generate_column_value(column['table'], other_column_info, row)
+                    other_value = row[other_col]
+                else:
+                    continue  # Cannot proceed without the other column
+
+            # Adjust generated_value based on the operator and other_value
+            if 'INT' in col_type or 'DECIMAL' in col_type or 'NUMERIC' in col_type:
+                if operator == '>':
+                    generated_value = max(generated_value, other_value + 1)
+                elif operator == '>=':
+                    generated_value = max(generated_value, other_value)
+                elif operator == '<':
+                    generated_value = min(generated_value, other_value - 1)
+                elif operator == '<=':
+                    generated_value = min(generated_value, other_value)
+            elif 'DATE' in col_type:
+                if operator == '>':
+                    generated_value = max(generated_value, other_value + timedelta(days=1))
+                elif operator == '>=':
+                    generated_value = max(generated_value, other_value)
+                elif operator == '<':
+                    generated_value = min(generated_value, other_value - timedelta(days=1))
+                elif operator == '<=':
+                    generated_value = min(generated_value, other_value)
+            else:
+                # Handle other types if necessary
+                pass
+
+        return generated_value
     def get_column_info(self, table, col_name):
         """
         Get the column schema information for a specific column.
