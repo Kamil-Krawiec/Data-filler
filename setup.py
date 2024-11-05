@@ -1,12 +1,12 @@
 from setuptools import setup, find_packages
 
 # Read requirements from the requirements.txt file
-with open("requirements.txt") as f:
+with open("./requirements.txt") as f:
     install_requires = [line.strip() for line in f if line.strip()]
 
 setup(
     name='intelligent-data-generator',
-    version='1.0.2',
+    version='1.1.0',
     author='Kamil Krawiec',
     author_email='kamil.krawiec9977@gmail.com',
     description='A Python package for generating semantically and syntactically correct data for RDBMS.',
