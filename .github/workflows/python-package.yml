@@ -8,15 +8,14 @@ on:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v3
+      uses: actions/checkout@v2
 
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v2
       with:
         python-version: '3.10'
 
@@ -25,39 +24,8 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt 
         pip install . 
-
     - name: Build binary wheel and a source tarball
-      run: python setup.py sdist bdist_wheel
-
-    - name: List dist contents
-      run: ls -la dist
-
-    # Save artifacts for the publish job
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v3
-      with:
-        name: dist
-        path: dist/*
-
-  publish:
-    needs: build
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-
-    steps:
-    - name: Download build artifacts
-      uses: actions/download-artifact@v3
-      with:
-        name: dist
-        path: dist
-
-    - name: List downloaded artifacts
-      run: ls -la dist
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.10'
+      run: python setup.py sdist
 
     - name: Publish distribution to PyPI
       env:
@@ -65,4 +33,3 @@ jobs:
         TWINE_PASSWORD: ${{ secrets.pypi_password }}
       run: |
         pip install twine 
-        twine upload dist/*
