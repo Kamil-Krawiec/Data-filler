@@ -27,11 +27,14 @@ jobs:
         pip install . 
 
     - name: Build binary wheel and a source tarball
-      run: python setup.py sdist
+      run: python setup.py sdist bdist_wheel
+
+    - name: List dist contents
+      run: ls -la dist
 
     # Save artifacts for the publish job
     - name: Upload build artifacts
-      uses: actions/upload-artifact@v3  # Update to v3
+      uses: actions/upload-artifact@v3
       with:
         name: dist
         path: dist/*
@@ -46,6 +49,10 @@ jobs:
       uses: actions/download-artifact@v3
       with:
         name: dist
+        path: dist
+
+    - name: List downloaded artifacts
+      run: ls -la dist
 
     - name: Set up Python
       uses: actions/setup-python@v4
