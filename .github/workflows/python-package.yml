@@ -24,12 +24,15 @@ jobs:
         python -m pip install --upgrade pip
         pip install -r requirements.txt 
         pip install . 
+      
     - name: Build binary wheel and a source tarball
       run: python setup.py sdist
 
     - name: Publish distribution to PyPI
+      if: github.event_name == 'push' && github.ref == 'refs/heads/master'
       env:
         TWINE_USERNAME: __token__
         TWINE_PASSWORD: ${{ secrets.pypi_password }}
       run: |
         pip install twine 
+        twine upload dist/*
