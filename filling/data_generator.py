@@ -9,19 +9,29 @@ ParserElement.enablePackrat()
 
 class DataGenerator:
     """
-    A class to generate synthetic data for database tables based on provided schemas and constraints.
+    Intelligent Data Generator for Automated Synthetic Database Population.
+
+    The `DataGenerator` class is a powerful tool designed to create realistic synthetic data for database tables based on provided schemas and constraints. It automates the entire data generation process, ensuring that all relational dependencies and data integrity rules are meticulously respected. This tool is especially useful for populating PostgreSQL databases during development, testing, or demonstration phases.
+
+    Key Features:
+    - **Dependency Management:** Automatically resolves and establishes foreign key relationships between tables.
+    - **Constraint Enforcement:** Adheres to all defined constraints, including NOT NULL, UNIQUE, CHECK, and FOREIGN KEY constraints.
+    - **Customizable Data Generation:** Supports predefined values and custom faker functions for tailored data generation.
+    - **Error Handling:** Implements a repair system to handle and rectify data inconsistencies by removing incompatible rows.
+    - **Extensibility:** Easily extendable to accommodate additional data types and constraints as needed.
     """
+
     def __init__(self, tables, num_rows=10, predefined_values=None, column_type_mappings=None,
                  num_rows_per_table=None):
         """
-        Initialize the DataGenerator with table schemas and the number of rows to generate.
+        Initialize the DataGenerator with table schemas and configuration settings.
 
         Args:
-            tables (dict): Parsed table schemas.
-            num_rows (int): Default number of rows to generate per table.
-            predefined_values (dict): Dictionary of predefined values for specific columns.
-            column_type_mappings (dict): Dictionary mapping column names to faker functions or data types.
-            num_rows_per_table (dict): Dictionary specifying the number of rows for each table.
+            tables (dict): Parsed table schemas containing table definitions and constraints.
+            num_rows (int, optional): Default number of rows to generate per table. Defaults to 10.
+            predefined_values (dict, optional): Predefined values for specific columns to ensure consistency. Defaults to None.
+            column_type_mappings (dict, optional): Mappings of column names to specific data generation functions or types. Defaults to None.
+            num_rows_per_table (dict, optional): Specific number of rows to generate for each table. Overrides `num_rows` if provided. Defaults to None.
         """
         self.tables = tables
         self.num_rows = num_rows
@@ -37,12 +47,14 @@ class DataGenerator:
         self.predefined_values = predefined_values or {}
         self.column_type_mappings = column_type_mappings or {}
 
-    def build_foreign_key_map(self):
+    def build_foreign_key_map(self) -> dict:
         """
-        Build a mapping of foreign key relationships for quick lookup.
+        Construct a mapping of foreign key relationships between parent and child tables.
+
+        This mapping facilitates the automatic assignment of foreign key values during data generation, ensuring referential integrity across related tables.
 
         Returns:
-            dict: A mapping where each key is a parent table, and the value is a list of child table relationships.
+            dict: A dictionary where each key is a parent table name, and the value is a list of dictionaries detailing child table relationships, including referenced columns.
         """
         fk_map = {}
         for table_name, details in self.tables.items():
@@ -62,19 +74,32 @@ class DataGenerator:
                 })
         return fk_map
 
-    def get_all_column_names(self):
+    def get_all_column_names(self) -> list:
+        """
+        Retrieve a comprehensive list of all column names across all tables.
+
+        This method aggregates column names from every table defined in the schema, assisting in various data generation and validation processes.
+
+        Returns:
+            list: A list containing the names of all columns present in the database schema.
+        """
         columns = set()
         for table in self.tables.values():
             for column in table['columns']:
                 columns.add(column['name'])
         return list(columns)
 
-    def resolve_table_order(self):
+    def resolve_table_order(self) -> list:
         """
-        Resolve the order in which tables should be processed based on foreign key dependencies.
+        Determine the optimal order for processing tables based on foreign key dependencies.
+
+        By resolving table dependencies, this method ensures that parent tables are populated before their corresponding child tables, preventing foreign key violations during data insertion.
 
         Returns:
-            list: Ordered list of table names.
+            list: An ordered list of table names, sequenced to respect foreign key dependencies.
+
+        Raises:
+            Exception: If a circular dependency is detected among tables, preventing proper ordering.
         """
         order = []
         dependencies = {table: set() for table in self.tables}
@@ -100,7 +125,9 @@ class DataGenerator:
 
     def initialize_primary_keys(self):
         """
-        Initialize primary key counters for each table.
+        Initialize primary key counters for each table to ensure unique identifier generation.
+
+        This method sets up counters for primary key columns, starting from 1, to facilitate the creation of unique primary key values for each row in every table.
         """
         for table in self.tables:
             self.primary_keys[table] = {}
@@ -110,7 +137,9 @@ class DataGenerator:
 
     def generate_initial_data(self):
         """
-        Generate initial data for all tables without enforcing constraints.
+        Generate preliminary data for all tables without enforcing constraints.
+
+        This initial data generation populates tables with primary keys and prepares the dataset for subsequent constraint enforcement. It handles both single and composite primary keys appropriately.
         """
         for table in self.table_order:
             self.generated_data[table] = []
@@ -125,13 +154,13 @@ class DataGenerator:
                 # Composite primary key; generate combinations
                 self.generate_composite_primary_keys(table, num_rows)
 
-    def generate_composite_primary_keys(self, table, num_rows):
+    def generate_composite_primary_keys(self, table: str, num_rows: int):
         """
-        Generate data for a table with a composite primary key.
+        Generate data for tables with composite primary keys by creating unique combinations of key values.
 
         Args:
-            table (str): Table name.
-            num_rows (int): Number of rows to generate.
+            table (str): The name of the table requiring composite primary key generation.
+            num_rows (int): The number of unique rows to generate for the table.
         """
         pk_columns = self.tables[table]['primary_key']
 
@@ -166,13 +195,13 @@ class DataGenerator:
                 row[pk] = combinations[i][idx]
             self.generated_data[table].append(row)
 
-    def generate_primary_keys(self, table, row):
+    def generate_primary_keys(self, table: str, row: dict):
         """
-        Generate primary key values for a table row.
+        Assign unique primary key values to a given row in a specified table.
 
         Args:
-            table (str): Table name.
-            row (dict): Row data.
+            table (str): The name of the table where the row resides.
+            row (dict): The dictionary representing the row data to be populated with primary key values.
         """
         pk_columns = self.tables[table].get('primary_key', [])
         for pk in pk_columns:
@@ -181,7 +210,9 @@ class DataGenerator:
 
     def enforce_constraints(self):
         """
-        Enforce all constraints on the generated data.
+        Enforce all defined constraints on the generated data across all tables.
+
+        This method applies NOT NULL, UNIQUE, and CHECK constraints to ensure data integrity. It also manages the assignment of foreign keys based on established relationships.
         """
         for table in self.table_order:
             self.unique_values[table] = {}
@@ -200,13 +231,13 @@ class DataGenerator:
                 self.enforce_unique_constraints(table, row)
                 self.enforce_check_constraints(table, row)
 
-    def assign_foreign_keys(self, table, row):
+    def assign_foreign_keys(self, table: str, row: dict):
         """
-        Assign foreign key values to a table row.
+        Automatically assign foreign key values to a table row based on established relationships.
 
         Args:
-            table (str): Table name.
-            row (dict): Row data.
+            table (str): The name of the table where the row resides.
+            row (dict): The dictionary representing the row data to be populated with foreign key values.
         """
         fks = self.tables[table].get('foreign_keys', [])
         for fk in fks:
@@ -225,9 +256,15 @@ class DataGenerator:
                 for fk_col in fk_columns:
                     row[fk_col] = None
 
-    def fill_remaining_columns(self, table, row):
+    def fill_remaining_columns(self, table: str, row: dict):
         """
-        Fill in the remaining columns of a table row.
+        Populate all remaining columns in a table row with appropriate synthetic data.
+
+        This method handles the generation of data for columns that are not primary or foreign keys, utilizing predefined values and custom mappings to ensure realistic data generation.
+
+        Args:
+            table (str): The name of the table where the row resides.
+            row (dict): The dictionary representing the row data to be populated.
         """
         columns = self.tables[table]['columns']
         for column in columns:
@@ -250,13 +287,13 @@ class DataGenerator:
             # Generate the column value
             row[col_name] = self.generate_column_value(table, column, row, constraints=col_constraints)
 
-    def enforce_not_null_constraints(self, table, row):
+    def enforce_not_null_constraints(self, table: str, row: dict):
         """
-        Enforce NOT NULL constraints on a table row.
+        Ensure that all NOT NULL constraints are satisfied by populating missing values in a table row.
 
         Args:
-            table (str): Table name.
-            row (dict): Row data.
+            table (str): The name of the table where the row resides.
+            row (dict): The dictionary representing the row data to be checked and populated.
         """
         for column in self.tables[table]['columns']:
             col_name = column['name']
@@ -264,7 +301,25 @@ class DataGenerator:
             if 'NOT NULL' in constraints and row.get(col_name) is None:
                 row[col_name] = self.generate_column_value(table, column, row, constraints=constraints)
 
-    def generate_column_value(self, table, column, row, constraints=None):
+    def generate_column_value(
+        self,
+        table: str,
+        column: dict,
+        row: dict,
+        constraints: list = None
+    ):
+        """
+        Generate a synthetic value for a specific column in a table row, considering predefined values and constraints.
+
+        Args:
+            table (str): The name of the table containing the column.
+            column (dict): The schema information of the column for which to generate data.
+            row (dict): The current state of the row being populated.
+            constraints (list, optional): A list of constraints applicable to the column. Defaults to None.
+
+        Returns:
+            Any: A generated value that adheres to the column's data type and constraints.
+        """
         constraints = constraints or []
         col_name = column['name']
         col_type = column['type'].upper()
@@ -322,15 +377,16 @@ class DataGenerator:
         # Default data generation based on column type
         return self.generate_value_based_on_type(col_type)
 
-    def generate_value_based_on_type(self, col_type):
+
+    def generate_value_based_on_type(self, col_type: str):
         """
-        Generate a value based on the SQL data type.
+        Generate a synthetic value based on the SQL data type of a column.
 
         Args:
-            col_type (str): Column data type.
+            col_type (str): The SQL data type of the column.
 
         Returns:
-            Any: Generated value.
+            Any: A synthetic value appropriate for the specified data type.
         """
         if re.match(r'.*\b(INT|INTEGER|SMALLINT|BIGINT)\b.*', col_type):
             return random.randint(1, 10000)
@@ -368,13 +424,13 @@ class DataGenerator:
             # Default to a random word for unknown types
             return self.fake.word()
 
-    def is_foreign_key_column(self, table_p, col_name):
+    def is_foreign_key_column(self, table_p: str, col_name: str) -> bool:
         """
-        Check if a column is a foreign key in the specified table.
+        Determine whether a specific column in a table is a foreign key.
 
         Args:
-            table_p (str): Table name.
-            col_name (str): Column name.
+            table_p (str): The name of the table containing the column.
+            col_name (str): The name of the column to check.
 
         Returns:
             bool: True if the column is a foreign key, False otherwise.
@@ -385,9 +441,14 @@ class DataGenerator:
                 return True
         return False
 
-    def enforce_unique_constraints(self, table, row):
+
+    def enforce_unique_constraints(self, table: str, row: dict):
         """
-        Enforce unique constraints on a table row.
+        Enforce UNIQUE constraints on a table row to ensure data uniqueness.
+
+        Args:
+            table (str): The name of the table where the row resides.
+            row (dict): The dictionary representing the row data to be validated.
         """
 
         unique_constraints = self.tables[table].get('unique_constraints', []).copy()
@@ -404,13 +465,13 @@ class DataGenerator:
                 unique_key = tuple(row[col] for col in unique_cols)
             unique_set.add(unique_key)
 
-    def enforce_check_constraints(self, table, row):
+    def enforce_check_constraints(self, table: str, row: dict):
         """
-        Enforce CHECK constraints on a table row.
+        Enforce CHECK constraints on a table row to validate data against custom conditions.
 
         Args:
-            table (str): Table name.
-            row (dict): Row data.
+            table (str): The name of the table where the row resides.
+            row (dict): The dictionary representing the row data to be validated.
         """
         check_constraints = self.tables[table].get('check_constraints', [])
         for check in check_constraints:
@@ -421,8 +482,23 @@ class DataGenerator:
                     if column:
                         row[col_name] = self.generate_value_based_on_conditions(row, column, conds)
 
-    def generate_value_based_on_conditions(self, row, column, conditions):
+    def generate_value_based_on_conditions(
+        self,
+        row: dict,
+        column: dict,
+        conditions: list
+    ):
+        """
+        Generate a column value that satisfies specific conditional constraints.
 
+        Args:
+            row (dict): The current state of the row being populated.
+            column (dict): The schema information of the column for which to generate data.
+            conditions (list): A list of conditions extracted from CHECK constraints.
+
+        Returns:
+            Any: A generated value that meets all specified conditions.
+        """
         col_type = column['type'].upper()
         min_value = None
         max_value = None
@@ -496,28 +572,31 @@ class DataGenerator:
                 pass
 
         return generated_value
-    def get_column_info(self, table, col_name):
+
+    def get_column_info(self, table: str, col_name: str) -> dict:
         """
-        Get the column schema information for a specific column.
+        Retrieve schema information for a specific column in a table.
 
         Args:
-            table (str): Table name.
-            col_name (str): Column name.
+            table (str): The name of the table containing the column.
+            col_name (str): The name of the column to retrieve information for.
 
         Returns:
-            dict: Column schema.
+            dict: A dictionary containing the column's schema details.
         """
         for col in self.tables[table]['columns']:
             if col['name'] == col_name:
                 return col
         return None
 
-    def generate_data(self):
+    def generate_data(self) -> dict:
         """
-        Generate the data by running all steps.
+        Execute the complete data generation process, including initial data creation and constraint enforcement.
+
+        This method orchestrates the entire workflow of data generation, ensuring that all tables are populated in the correct order and that all constraints are duly enforced.
 
         Returns:
-            dict: Generated data with constraints enforced.
+            dict: A dictionary containing the generated data for each table, structured by table name.
         """
         self.generate_initial_data()
         self.enforce_constraints()
@@ -525,12 +604,14 @@ class DataGenerator:
         self.print_statistics()
         return self.generated_data
 
-    def export_as_sql_insert_query(self):
+    def export_as_sql_insert_query(self) -> str:
         """
-        Export the generated data as SQL INSERT queries.
+        Export the generated synthetic data as SQL INSERT queries.
+
+        This method formats the generated data into executable SQL INSERT statements, allowing for easy population of the target PostgreSQL database.
 
         Returns:
-            str: A string containing SQL INSERT queries.
+            str: A string containing SQL INSERT queries for all populated tables.
         """
         insert_queries = []
 
@@ -576,18 +657,20 @@ class DataGenerator:
 
     def repair_data(self):
         """
-        Iterate through the data and remove any rows that violate constraints,
-        including cascading deletions to maintain referential integrity.
+        Identify and remove any rows that violate defined constraints to maintain data integrity.
+
+        This repair system scans the generated data for constraint violations and removes offending rows. It also handles cascading deletions in child tables to preserve referential integrity.
         """
         for table in self.table_order:
             self.repair_table_data(table)
 
-    def repair_table_data(self, table):
+
+    def repair_table_data(self, table: str):
         """
-        Repair data for a specific table.
+        Cleanse data in a specific table by removing rows that violate constraints.
 
         Args:
-            table (str): Table name.
+            table (str): The name of the table to repair.
         """
         valid_rows = []
         deleted_rows = 0
@@ -606,18 +689,16 @@ class DataGenerator:
         if deleted_rows > 0:
             print(f"[Repair] Deleted {deleted_rows} row(s) from table '{table}' during repair.")
 
-    def is_row_valid(self, table, row):
+    def is_row_valid(self, table: str, row: dict) -> tuple:
         """
-        Check if a row is valid by checking all constraints.
+        Validate a single row against all applicable constraints.
 
         Args:
-            table (str): Table name.
-            row (dict): Row data.
+            table (str): The name of the table where the row resides.
+            row (dict): The dictionary representing the row data to be validated.
 
         Returns:
-            tuple: (is_valid, violated_constraint)
-                is_valid (bool): True if the row is valid, False otherwise.
-                violated_constraint (str): Description of the violated constraint, or None if valid.
+            tuple: A tuple containing a boolean indicating validity and a string describing the violated constraint, if any.
         """
         # Check NOT NULL constraints
         for column in self.tables[table]['columns']:
@@ -643,13 +724,13 @@ class DataGenerator:
         # All constraints passed
         return True, None
 
-    def remove_dependent_data(self, table, row):
+    def remove_dependent_data(self, table: str, row: dict):
         """
-        Recursively remove dependent rows in child tables.
+        Recursively remove dependent rows in child tables that reference a deleted parent row.
 
         Args:
-            table (str): Table name where the row is removed.
-            row (dict): The row data that was removed.
+            table (str): The name of the parent table from which a row was deleted.
+            row (dict): The dictionary representing the deleted row data.
         """
         if table not in self.foreign_key_map:
             return
@@ -683,7 +764,9 @@ class DataGenerator:
 
     def print_statistics(self):
         """
-        Print statistics about the generated data.
+        Display statistics about the generated data, including the number of rows per table.
+
+        This method provides a summary of the data generation process, helping users understand the scope and distribution of the synthetic data created.
         """
         print("\nData Generation Statistics:")
         for table in self.table_order:
