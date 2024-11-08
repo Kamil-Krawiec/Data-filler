@@ -1,6 +1,8 @@
-from datetime import datetime, date, timedelta
 import itertools
+from datetime import datetime, date, timedelta
+
 from faker import Faker
+
 from .check_constraint_evaluator import CheckConstraintEvaluator
 from .helpers import *
 
@@ -302,11 +304,11 @@ class DataGenerator:
                 row[col_name] = self.generate_column_value(table, column, row, constraints=constraints)
 
     def generate_column_value(
-        self,
-        table: str,
-        column: dict,
-        row: dict,
-        constraints: list = None
+            self,
+            table: str,
+            column: dict,
+            row: dict,
+            constraints: list = None
     ):
         """
         Generate a synthetic value for a specific column in a table row, considering predefined values and constraints.
@@ -377,7 +379,6 @@ class DataGenerator:
         # Default data generation based on column type
         return self.generate_value_based_on_type(col_type)
 
-
     def generate_value_based_on_type(self, col_type: str):
         """
         Generate a synthetic value based on the SQL data type of a column.
@@ -441,7 +442,6 @@ class DataGenerator:
                 return True
         return False
 
-
     def enforce_unique_constraints(self, table: str, row: dict):
         """
         Enforce UNIQUE constraints on a table row to ensure data uniqueness.
@@ -483,10 +483,10 @@ class DataGenerator:
                         row[col_name] = self.generate_value_based_on_conditions(row, column, conds)
 
     def generate_value_based_on_conditions(
-        self,
-        row: dict,
-        column: dict,
-        conditions: list
+            self,
+            row: dict,
+            column: dict,
+            conditions: list
     ):
         """
         Generate a column value that satisfies specific conditional constraints.
@@ -663,7 +663,6 @@ class DataGenerator:
         """
         for table in self.table_order:
             self.repair_table_data(table)
-
 
     def repair_table_data(self, table: str):
         """
