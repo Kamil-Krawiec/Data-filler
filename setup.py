@@ -6,7 +6,7 @@ with open("./requirements.txt") as f:
 
 setup(
     name='intelligent-data-generator',
-    version='1.1.1',
+    version='1.1.2',
     author='Kamil Krawiec',
     author_email='kamil.krawiec9977@gmail.com',
     description='A Python package for generating semantically and syntactically correct data for RDBMS.',
