@@ -6,3 +6,6 @@ sqlglot
 networkx
 pyparsing
 exrex
+sphinx
+sphinx-rtd-theme
+sphinx-autodoc-typehints
