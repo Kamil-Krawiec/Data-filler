@@ -7,16 +7,22 @@ from pyparsing import ParserElement
 ParserElement.enablePackrat()
 
 
-def extract_numeric_ranges(constraints, col_name):
+def extract_numeric_ranges(constraints: list, col_name: str) -> list:
     """
     Extract numeric ranges from constraints related to a specific column.
 
+    This function parses a list of SQL constraint expressions to identify and extract numeric range conditions
+    (e.g., `>=`, `<=`, `>`, `<`, `=`, `BETWEEN`) applied to a specified column. It returns these conditions
+    as a list of tuples, where each tuple contains the operator and the corresponding numeric value.
+
     Args:
-        constraints (list): List of constraint expressions.
-        col_name (str): Name of the column to extract ranges for.
+        constraints (list): A list of SQL constraint expressions as strings.
+        col_name (str): The name of the column from which to extract numeric range constraints.
 
     Returns:
-        list: A list of tuples representing operators and their corresponding numeric values.
+        list of tuple:
+            A list where each tuple consists of an operator (str) and a numeric value (float). For example:
+            `[('>=', 1.0), ('<=', 10.0)]`
     """
     ranges = []
     for constraint in constraints:
@@ -37,16 +43,25 @@ def extract_numeric_ranges(constraints, col_name):
     return ranges
 
 
-def generate_numeric_value(ranges, col_type):
+def generate_numeric_value(ranges: list, col_type: str) -> int or float:
     """
     Generate a numeric value based on specified ranges and column type.
 
+    This function takes a list of numeric range conditions and the data type of the column to generate
+    a random numeric value that satisfies all specified constraints. It intelligently determines the
+    appropriate range for value generation based on the operators provided.
+
     Args:
-        ranges (list): A list of tuples representing numeric ranges and their operators.
-        col_type (str): The data type of the column.
+        ranges (list of tuple): A list of tuples where each tuple contains an operator (str) and a numeric value (float).
+                                 Example: `[('>=', 1.0), ('<=', 10.0)]`
+        col_type (str): The SQL data type of the column (e.g., 'INT', 'DECIMAL', 'NUMERIC').
 
     Returns:
-        int or float: A randomly generated numeric value within the specified range.
+        int or float:
+            A randomly generated numeric value within the specified range. The type of the returned value
+            matches the column type:
+            - Returns an `int` if the column type is integer-based.
+            - Returns a `float` if the column type is decimal-based.
     """
     min_value = None
     max_value = None
@@ -73,15 +88,21 @@ def generate_numeric_value(ranges, col_type):
         return random.uniform(min_value, max_value)
 
 
-def generate_value_matching_regex(pattern):
+def generate_value_matching_regex(pattern: str) -> str:
     """
     Generate a value that matches a specified regex pattern.
 
+    This function utilizes the `exrex` library to generate a random string that conforms to the provided
+    regular expression pattern. It handles escape sequences and ensures that the generated value is valid
+    according to the regex constraints.
+
     Args:
-        pattern (str): The regex pattern to match.
+        pattern (str): The regex pattern that the generated string must match. For example, `'^\d{13}$'` for a 13-digit ISBN.
 
     Returns:
-        str: A randomly generated string that matches the given regex pattern.
+        str:
+            A randomly generated string that matches the given regex pattern. If the pattern is invalid or
+            no matching string can be generated, an empty string is returned.
     """
     # Handle escape sequences
     pattern = pattern.encode('utf-8').decode('unicode_escape')
@@ -94,16 +115,21 @@ def generate_value_matching_regex(pattern):
         return ''
 
 
-def extract_regex_pattern(constraints, col_name):
+def extract_regex_pattern(constraints: list, col_name: str) -> list:
     """
     Extract regex patterns from constraints related to a specific column.
 
+    This function scans through a list of SQL constraint expressions to identify any `REGEXP_LIKE` conditions
+    applied to a specified column. It extracts and returns the regex patterns used in these constraints.
+
     Args:
-        constraints (list): List of constraint expressions.
-        col_name (str): Name of the column to extract regex patterns for.
+        constraints (list): A list of SQL constraint expressions as strings.
+        col_name (str): The name of the column from which to extract regex patterns.
 
     Returns:
-        list: A list of regex patterns found in the constraints.
+        list of str:
+            A list of regex patterns found in the constraints for the specified column. For example:
+            `['^\d{13}$', '^[\\w\\.-]+@[\\w\\.-]+\\.\\w{2,}$']`
     """
     patterns = []
     for constraint in constraints:
@@ -114,16 +140,21 @@ def extract_regex_pattern(constraints, col_name):
     return patterns
 
 
-def extract_allowed_values(constraints, col_name):
+def extract_allowed_values(constraints: list, col_name: str) -> list:
     """
     Extract allowed values from constraints related to a specific column.
 
+    This function parses a list of SQL constraint expressions to identify any `IN` clauses that define
+    a set of permissible values for a specified column. It extracts and returns these allowed values.
+
     Args:
-        constraints (list): List of constraint expressions.
-        col_name (str): Name of the column to extract allowed values for.
+        constraints (list): A list of SQL constraint expressions as strings.
+        col_name (str): The name of the column from which to extract allowed values.
 
     Returns:
-        list: A list of allowed values specified in the constraints.
+        list of str:
+            A list of allowed values specified in the `IN` clauses for the given column. For example:
+            `['Fiction', 'Non-fiction', 'Science']`
     """
     allowed_values = []
     for constraint in constraints:

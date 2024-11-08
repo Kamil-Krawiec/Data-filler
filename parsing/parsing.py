@@ -14,20 +14,65 @@ from sqlglot.expressions import (
 )
 
 
-def parse_create_tables(sql_script):
+def parse_create_tables(sql_script, dialect='postgres'):
     """
-    Parses SQL CREATE TABLE statements and extracts table schema details,
-    including columns, data types, constraints, and foreign keys.
+        Parses SQL CREATE TABLE statements and extracts table schema details,
+        including columns, data types, constraints, and foreign keys.
 
-    Args:
-        sql_script (str): The SQL script containing CREATE TABLE statements.
+        Parameters
+        ----
+            sql_script (str): The SQL script containing CREATE TABLE statements.
+            dialect (str, optional): The SQL dialect to parse. Defaults to 'postgres'.
 
-    Returns:
-        dict: A dictionary where each key is a table name and the value is
-              another dictionary containing columns and foreign keys.
+        Returns
+        -------
+            dict: A dictionary where each key is a table name and the value is
+                  another dictionary containing columns, foreign keys, and other
+                  schema details.
+
+        Example
+        -------
+            >>> from parsing.parsing import parse_create_tables
+            >>> sql_script =
+            '''
+            CREATE TABLE Members (
+            member_id SERIAL PRIMARY KEY,
+            first_name VARCHAR(50) NOT NULL,
+            last_name VARCHAR(50) NOT NULL,
+            email VARCHAR(100) NOT NULL UNIQUE,
+            registration_date DATE NOT NULL,
+            CONSTRAINT chk_email_format CHECK (email ~ '^[\\w\\.-]+@[\\w\\.-]+\\.\\w{2,}$'));'''
+            >>> tables = parse_create_tables(sql_script)
+            >>> print(tables)
+        Output
+        ------
+        {
+
+        'Members': {
+            'columns': [
+                {'name': 'member_id', 'type': 'SERIAL', 'constraints': ['PRIMARY KEY'], 'foreign_key': None},
+
+                {'name': 'first_name', 'type': 'VARCHAR(50)', 'constraints': ['NOT NULL'], 'foreign_key': None},
+
+                {'name': 'last_name', 'type': 'VARCHAR(50)', 'constraints': ['NOT NULL'], 'foreign_key': None},
+
+                {'name': 'email', 'type': 'VARCHAR(100)', 'constraints': ['NOT NULL', 'UNIQUE'], 'foreign_key': None},
+
+                {'name': 'registration_date', 'type': 'DATE', 'constraints': ['NOT NULL'], 'foreign_key': None}
+
+            ],
+            'foreign_keys': [],
+
+            'primary_key': ['member_id'],
+
+            'unique_constraints': [['member_id'], ['email']],
+
+            'check_constraints': ["REGEXP_LIKE(email, '^[\\w\\.-]+@[\\w\\.-]+\\.\\w{2,}$')"]
+        }}
     """
-    # Parse the SQL script with the appropriate dialect
-    parsed = sqlglot.parse(sql_script, read='postgres')  # Adjust dialect if necessary
+
+    # Parse the SQL script with the appropriate dialect here (e.g., 'postgres')
+    parsed = sqlglot.parse(sql_script, read=dialect)
     tables = {}
 
     for statement in parsed:
@@ -38,7 +83,7 @@ def parse_create_tables(sql_script):
 
             table = schema.this
             if not isinstance(table, Table):
-                continue  # Skip if not a Table
+                continue  # Not a table so skip
 
             table_name = table.name
             columns = []
