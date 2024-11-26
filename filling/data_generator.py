@@ -138,32 +138,26 @@ class DataGenerator:
                 self.primary_keys[table][pk] = 1  # Start counting from 1
 
     def generate_initial_data(self):
-        """
-        Generate preliminary data for all tables without enforcing constraints.
-
-        This initial data generation populates tables with primary keys and prepares the dataset for subsequent constraint enforcement. It handles both single and composite primary keys appropriately.
-        """
         for table in self.table_order:
             self.generated_data[table] = []
             num_rows = self.num_rows_per_table.get(table, self.num_rows)
             pk_columns = self.tables[table].get('primary_key', [])
+
             if len(pk_columns) == 1:
                 for _ in range(num_rows):
                     row = {}
                     self.generate_primary_keys(table, row)
                     self.generated_data[table].append(row)
-            else:
+            elif len(pk_columns) > 1:
                 # Composite primary key; generate combinations
                 self.generate_composite_primary_keys(table, num_rows)
+            else:
+                # No primary key; generate rows without primary key assignment
+                for _ in range(num_rows):
+                    row = {}
+                    self.generated_data[table].append(row)
 
     def generate_composite_primary_keys(self, table: str, num_rows: int):
-        """
-        Generate data for tables with composite primary keys by creating unique combinations of key values.
-
-        Args:
-            table (str): The name of the table requiring composite primary key generation.
-            num_rows (int): The number of unique rows to generate for the table.
-        """
         pk_columns = self.tables[table]['primary_key']
 
         # Generate possible values for each primary key column
@@ -172,9 +166,18 @@ class DataGenerator:
             # If the primary key column is a foreign key, get values from the referenced table
             if self.is_foreign_key_column(table, pk):
                 fk = next((fk for fk in self.tables[table]['foreign_keys'] if pk in fk['columns']), None)
-                ref_table = fk['ref_table']
-                ref_column = fk['ref_columns'][fk['columns'].index(pk)]
-                pk_values[pk] = [row[ref_column] for row in self.generated_data[ref_table]]
+                if fk and fk['ref_table'] in self.generated_data:
+                    ref_table = fk['ref_table']
+                    ref_column = fk['ref_columns'][fk['columns'].index(pk)]
+                    ref_data = self.generated_data[ref_table]
+                    if ref_data:
+                        pk_values[pk] = [row[ref_column] for row in ref_data]
+                    else:
+                        # If referenced table has no data, assign None or handle accordingly
+                        pk_values[pk] = [None]
+                else:
+                    # If foreign key references a non-existent table, assign None or handle accordingly
+                    pk_values[pk] = [None]
             else:
                 # Generate a range of values for the primary key column
                 pk_values[pk] = list(range(1, num_rows + 1))
