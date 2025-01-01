@@ -28,6 +28,9 @@ jobs:
     - name: Build binary wheel and a source tarball
       run: python setup.py sdist
 
+    - name: test with pytest
+      run: pytest
+
     - name: Publish distribution to PyPI
       if: github.event_name == 'push' && github.ref == 'refs/heads/master'
       env:
