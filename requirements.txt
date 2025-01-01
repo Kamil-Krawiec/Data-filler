@@ -6,3 +6,4 @@ sqlglot
 networkx
 pyparsing
 exrex
+pytest
