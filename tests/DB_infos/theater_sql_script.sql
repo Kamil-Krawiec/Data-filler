@@ -1,5 +1,5 @@
 CREATE TABLE IF NOT EXISTS Theaters (
-    theater_id SERIAL PRIMARY KEY,
+    theater_id varchar(3) PRIMARY KEY,
     name VARCHAR(10) NOT NULL,
     capacity INT DEFAULT 0,
 
@@ -10,7 +10,7 @@ CREATE TABLE IF NOT EXISTS Theaters (
 CREATE TABLE Seats (
     row INT NOT NULL,
     seat INT NOT NULL,
-    theater_id BIGINT UNSIGNED NOT NULL,
+    theater_id INT UNSIGNED NOT NULL,
     CONSTRAINT unique_row_seat UNIQUE (row, seat, theater_id),
     CONSTRAINT fk_seats_theaters FOREIGN KEY (theater_id) REFERENCES theaters(theater_id)
 );

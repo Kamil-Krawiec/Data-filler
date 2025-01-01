@@ -222,15 +222,25 @@ class DataGenerator:
     def generate_primary_keys(self, table: str, row: dict):
         """
         Assign unique primary key values to a given row in a specified table.
-
-        Args:
-            table (str): The name of the table where the row resides.
-            row (dict): The dictionary representing the row data to be populated with primary key values.
+        If the PK column is_serial=True, we treat it as auto-increment integer.
+        Otherwise, we might generate something else (e.g., random strings).
         """
         pk_columns = self.tables[table].get('primary_key', [])
-        for pk in pk_columns:
-            row[pk] = self.primary_keys[table][pk]
-            self.primary_keys[table][pk] += 1
+        for pk_col in pk_columns:
+            col_info = self.get_column_info(table, pk_col)
+            if not col_info:
+                continue
+            col_type = col_info['type'].upper()
+
+            # is_serial or numeric => auto-increment
+            if col_info.get("is_serial") or re.search(r'(INT|BIGINT|SMALLINT|DECIMAL|NUMERIC)', col_type):
+                row[pk_col] = self.primary_keys[table][pk_col]
+                self.primary_keys[table][pk_col] += 1
+            else:
+                # It's a non-numeric PK, so generate text or whatever is suitable
+                length_match = re.search(r'\((\d+)\)', col_type)
+                length = int(length_match.group(1)) if length_match else 5
+                row[pk_col] = self.fake.lexify(text='?' * length)
 
     def enforce_constraints(self):
         """
@@ -308,8 +318,15 @@ class DataGenerator:
                 if col_name in constraint:
                     col_constraints.append(constraint)
 
-            # Generate the column value
-            row[col_name] = self.generate_column_value(table, column, row, constraints=col_constraints)
+            # If is_serial but not a PK, handle auto-increment:
+            if column.get('is_serial'):
+                # If we haven't set up a separate counter for this col, do so now
+                if col_name not in self.primary_keys[table]:
+                    self.primary_keys[table][col_name] = 1
+                row[col_name] = self.primary_keys[table][col_name]
+                self.primary_keys[table][col_name] += 1
+            else:
+                row[col_name] = self.generate_column_value(table, column, row, constraints=col_constraints)
 
     def enforce_not_null_constraints(self, table: str, row: dict):
         """
