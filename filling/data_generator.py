@@ -93,38 +93,57 @@ class DataGenerator:
 
     def resolve_table_order(self) -> list:
         """
-        Determine the optimal order for processing tables based on foreign key dependencies.
+        Determine the order for processing tables based on foreign key dependencies.
 
-        By resolving table dependencies, this method ensures that parent tables are populated before their corresponding child tables, preventing foreign key violations during data insertion.
+        By resolving table dependencies, this method ensures that parent tables
+        are inserted before their corresponding child tables, preventing foreign key
+        violations during data insertion.
 
         Returns:
-            list: An ordered list of table names, sequenced to respect foreign key dependencies.
+            list: An ordered list of table names, respecting foreign key dependencies.
 
         Raises:
-            Exception: If a circular dependency is detected among tables, preventing proper ordering.
+            Exception: If a circular dependency is detected among tables (i.e.,
+                       no valid topological ordering is possible).
         """
-        order = []
+
+        # 1) Initialize a dictionary to track dependencies of each table
         dependencies = {table: set() for table in self.tables}
 
-        for table, details in self.tables.items():
+        # 2) Fill in the dependency sets based on the foreign keys
+        for table_name, details in self.tables.items():
             for fk in details.get('foreign_keys', []):
-                if fk.get('ref_table'):
-                    dependencies[table].add(fk['ref_table'])
+                ref_table = fk.get('ref_table')
+                # Only consider valid foreign key references
+                if ref_table and ref_table in self.tables:
+                    dependencies[table_name].add(ref_table)
 
+        # This list will store the resulting topological order
+        table_order = []
+
+        # 3) Repeatedly look for tables that have no remaining dependencies
         while dependencies:
-            acyclic = False
-            for table, deps in list(dependencies.items()):
-                if not deps:
-                    acyclic = True
-                    order.append(table)
-                    del dependencies[table]
-                    for deps_set in dependencies.values():
-                        deps_set.discard(table)
-            if not acyclic:
-                raise Exception("Circular dependency detected among tables.")
+            # Find all tables that currently have no dependencies
+            no_deps = [t for t, deps in dependencies.items() if not deps]
 
-        return order
+            if not no_deps:
+                # We failed to find a table with zero dependencies -> true cycle
+                raise Exception(
+                    "Circular dependency detected among tables. "
+                    f"Remaining tables with unsatisfied dependencies: {dependencies}"
+                )
 
+            # 4) Move all those 'no dependency' tables into the result list
+            for t in no_deps:
+                table_order.append(t)
+                # Remove them from the 'dependencies' dict entirely
+                del dependencies[t]
+
+            # 5) Remove the newly resolved tables from the remaining tables' dependency sets
+            for t, deps in dependencies.items():
+                deps.difference_update(no_deps)
+
+        return table_order
     def initialize_primary_keys(self):
         """
         Initialize primary key counters for each table to ensure unique identifier generation.
