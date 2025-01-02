@@ -415,7 +415,6 @@ class DataGenerator:
         if numeric_ranges:
             return generate_numeric_value(numeric_ranges, col_type)
 
-        # Default data generation based on column type
         return self.generate_value_based_on_type(col_type)
 
     def generate_value_based_on_type(self, col_type: str):
@@ -428,16 +427,28 @@ class DataGenerator:
         Returns:
             Any: A synthetic value appropriate for the specified data type.
         """
+        is_unsigned = False
+        if col_type.upper().startswith('U'):
+            is_unsigned = True
+            col_type = col_type[1:]  # Remove the leading 'U' so the rest of the logic matches e.g. 'INT', 'BIGINT'
+
+        col_type = col_type.upper()
+
         if re.match(r'.*\b(INT|INTEGER|SMALLINT|BIGINT)\b.*', col_type):
-            return random.randint(1, 10000)
+            min_val = 0 if is_unsigned else -10000
+            return random.randint(min_val, 10000)
         elif re.match(r'.*\b(DECIMAL|NUMERIC)\b.*', col_type):
-            # Handle decimal and numeric types with precision and scale
-            precision, scale = 10, 2  # Default values
+            # Similar logic for DECIMAL if needed
+            precision, scale = 10, 2
             match = re.search(r'\((\d+),\s*(\d+)\)', col_type)
             if match:
                 precision, scale = int(match.group(1)), int(match.group(2))
             max_value = 10 ** (precision - scale) - 1
-            return round(random.uniform(0, max_value), scale)
+
+            # If it's unsigned, ensure the minimum is 0
+            min_dec = 0.0 if is_unsigned else -9999.0  # or 0 if you prefer all positives
+            return round(random.uniform(min_dec, max_value), scale)
+
         elif re.match(r'.*\b(FLOAT|REAL|DOUBLE PRECISION|DOUBLE)\b.*', col_type):
             return random.uniform(0, 10000)
         elif re.match(r'.*\b(BOOLEAN|BOOL)\b.*', col_type):

@@ -58,7 +58,6 @@ def parse_create_tables(sql_script, dialect='postgres'):
                         'constraints': ['PRIMARY KEY'],
                         'foreign_key': None,
                         'is_serial': True,
-                        'is_unsigned': False
                     },
                     {
                         'name': 'first_name',
@@ -66,7 +65,6 @@ def parse_create_tables(sql_script, dialect='postgres'):
                         'constraints': ['NOT NULL'],
                         'foreign_key': None,
                         'is_serial': False,
-                        'is_unsigned': False
                     },
                     ...
                 ],
@@ -117,13 +115,8 @@ def parse_create_tables(sql_script, dialect='postgres'):
                         "type": data_type,
                         "constraints": [],
                         "foreign_key": None,
-                        "is_serial": False,   # Will set True if we detect SERIAL or AUTO_INCREMENT
-                        "is_unsigned": False, # Will set True if we detect UNSIGNED
+                        "is_serial": False,  # Will set True if we detect SERIAL or AUTO_INCREMENT
                     }
-
-                    # Check if data_type itself indicates 'UNSIGNED'
-                    if data_type.startswith("U"):
-                        column_info["is_unsigned"] = True
 
                     # Check if data_type itself is 'SERIAL'
                     # (or might contain it, e.g. "BIGSERIAL")
