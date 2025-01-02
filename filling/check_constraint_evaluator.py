@@ -616,7 +616,6 @@ class CheckConstraintEvaluator:
         # Remove outer quotes from pattern if present
         if pattern.startswith("'") and pattern.endswith("'"):
             pattern = pattern[1:-1]
-        pattern = pattern.encode('utf-8').decode('unicode_escape')
         if not isinstance(value, str):
             value = str(value)
         try:
