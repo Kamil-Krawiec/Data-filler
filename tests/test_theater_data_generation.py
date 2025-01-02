@@ -92,12 +92,13 @@ def test_export_sql_theater(theater_data_generator):
 
 def test_constraints_theater(theater_data_generator):
     """
-    More advanced checks:
-      - Theaters capacity
-      - Movies duration, penalty_rate
-      - Seats uniqueness (row, seat, theater_id)
-      - Shows references Theaters, Movies
-      - Tickets references Shows and Seats
+    Advanced checks for Theater schema:
+
+    1) Theaters: capacity range, name length
+    2) Movies: duration, penalty_rate
+    3) Seats: row/seat + theater_id uniqueness
+    4) Shows: references Theaters & Movies
+    5) Tickets: references Shows(show_id) and composite seat (row, seat, theater_id)
     """
     data = theater_data_generator.generate_data()
 
@@ -106,9 +107,11 @@ def test_constraints_theater(theater_data_generator):
     for t in data.get("Theaters", []):
         tid = t["theater_id"]
         theater_ids.add(tid)
+
+        name = t["name"]
+        assert 1 <= len(name) <= 10, f"Theater name must be between 1..10 chars, got '{name}'"
         cap = t["capacity"]
         assert 0 < cap < 200, f"Theater capacity out of range: {cap}"
-        assert len(t["name"]) <= 10, f"Theater name too long: {t['name']}"
 
     # 2) Movies
     movie_ids = set()
@@ -116,42 +119,40 @@ def test_constraints_theater(theater_data_generator):
         mid = m["movie_id"]
         movie_ids.add(mid)
         dur = m["duration"]
+        rate = m["penalty_rate"]
         assert 60 <= dur <= 200, f"Movie duration out of range: {dur}"
-        assert m["penalty_rate"] > 0, f"penalty_rate must be > 0, got {m['penalty_rate']}"
+        assert rate > 0, f"penalty_rate must be > 0, got {rate}"
 
-    # 3) Seats
-    seats_set = set()
+    # 3) Seats => (row, seat, theater_id) unique + theater_id references Theaters
+    seat_keys = set()
     for s in data.get("Seats", []):
-        seat_key = (s["row"], s["seat"], s["theater_id"])
-        # Uniqueness check
-        assert seat_key not in seats_set, f"Duplicate seat found: {seat_key}"
-        seats_set.add(seat_key)
-        # The theater_id must exist in Theaters
-        assert s["theater_id"] in theater_ids, f"Invalid theater_id {s['theater_id']} in Seats"
+        key = (s["row"], s["seat"], s["theater_id"])
+        assert key not in seat_keys, f"Duplicate seat (row={key[0]}, seat={key[1]}, theater_id={key[2]})"
+        seat_keys.add(key)
+        # FK check
+        assert s["theater_id"] in theater_ids, f"seat references nonexistent theater_id {s['theater_id']}"
 
-    # 4) Shows: references Theaters, Movies
+    # 4) Shows => references Theaters + Movies
     show_ids = set()
-    for show in data.get("Shows", []):
-        sid = show["show_id"]
+    for sh in data.get("Shows", []):
+        sid = sh["show_id"]
         show_ids.add(sid)
 
-        # FKs
-        assert show["theater_id"] in theater_ids, f"Invalid theater_id {show['theater_id']} in Shows"
-        assert show["movie_id"] in movie_ids, f"Invalid movie_id {show['movie_id']} in Shows"
+        assert sh["theater_id"] in theater_ids, f"Shows references nonexistent theater_id {sh['theater_id']}"
+        assert sh["movie_id"] in movie_ids, f"Shows references nonexistent movie_id {sh['movie_id']}"
 
-        # Basic check for show_date and show_starts_at being not None
-        assert show["show_date"], "show_date is missing"
-        assert show["show_starts_at"], "show_starts_at is missing"
+        # Basic check for show_date, show_starts_at
+        assert sh["show_date"], "show_date is missing"
+        assert sh["show_starts_at"], "show_starts_at is missing"
 
-    # 5) Tickets: references Shows(show_id) and Seats(row, seat, theater_id)
+    # 5) Tickets => references Shows(show_id) + Seats(row, seat, theater_id)
     for tk in data.get("Tickets", []):
-        # 5a) Price >= 0
-        assert tk["price"] >= 0, f"Ticket price should be >= 0, got {tk['price']}"
-        # 5b) show_id must exist
-        assert tk["show_id"] in show_ids, f"Invalid show_id {tk['show_id']} in Tickets"
+        # Price must be >= 0
+        assert tk["price"] >= 0, f"Ticket price < 0, got {tk['price']}"
 
-        # 5c) (row, seat, theater_id) must exist in Seats
+        # Check show_id in Show
+        assert tk["show_id"] in show_ids, f"Ticket references nonexistent show_id {tk['show_id']}"
+
+        # Check row/seat/theater_id in Seats
         seat_key = (tk["row"], tk["seat"], tk["theater_id"])
-        assert seat_key in seats_set, (
-            f"Invalid seat reference {seat_key} in Tickets"
-        )
+        assert seat_key in seat_keys, f"Ticket references nonexistent seat {seat_key}"

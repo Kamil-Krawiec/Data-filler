@@ -120,55 +120,72 @@ def test_export_sql_ecommerce(ecommerce_data_generator):
 
 def test_constraints_ecommerce(ecommerce_data_generator):
     """
-    Check some constraints in the e-commerce domain:
-      - Email format
-      - price > 0, quantity >= 0
-      - total_amount >= 0
-      - OrderItems references valid Orders and Products
-      - ProductSuppliers references valid Products and Suppliers
+    Advanced checks for E-commerce:
+
+    - Customers table: email format
+    - Products table: price > 0, stock_quantity >= 0
+    - Orders table: customer_id references real Customer, total_amount >= 0
+    - OrderItems: references Orders & Products, quantity > 0, price > 0
+    - Suppliers & ProductSuppliers: references valid product_id & supplier_id, supply_price > 0
     """
     data = ecommerce_data_generator.generate_data()
 
-    # 1) Customers: check email format
+    # 1) Customers
+    customer_ids = set()
     for cust in data.get("Customers", []):
+        cid = cust["customer_id"]
+        customer_ids.add(cid)
         email = cust.get("email")
         assert re.match(r'^[\w\.-]+@[\w\.-]+\.\w{2,}$', email), f"Invalid email {email}"
 
-    # 2) Products: check price > 0, stock >= 0
+    # 2) Products
     product_ids = set()
     for prod in data.get("Products", []):
         pid = prod["product_id"]
         product_ids.add(pid)
 
-        price = prod.get("price")
-        stock = prod.get("stock_quantity")
+        price = prod["price"]
+        stock = prod["stock_quantity"]
         assert price > 0, f"Product price must be > 0, got {price}"
         assert stock >= 0, f"Stock quantity must be >= 0, got {stock}"
 
-    # 3) Orders: total_amount >= 0, check foreign key to Customers
-    #    We'll gather all valid customer_ids
-    customer_ids = {row["customer_id"] for row in data.get("Customers", [])}
+    # 3) Orders => references Customer
     order_ids = set()
     for order in data.get("Orders", []):
         oid = order["order_id"]
         order_ids.add(oid)
 
-        assert order.get("total_amount") >= 0, f"total_amount must be >= 0, got {order['total_amount']}"
-        # Check that the order's customer_id references a valid customer
         assert order["customer_id"] in customer_ids, (
-            f"Invalid customer_id {order['customer_id']} in Orders"
+            f"Order references nonexistent customer_id {order['customer_id']}"
         )
+        assert order["total_amount"] >= 0, f"total_amount < 0, got {order['total_amount']}"
 
-    # 4) OrderItems: quantity > 0, price > 0, references valid Orders & Products
+    # 4) OrderItems => references Orders, Products
     for oi in data.get("OrderItems", []):
+        assert oi["order_id"] in order_ids, f"OrderItems references nonexistent order_id {oi['order_id']}"
+        assert oi["product_id"] in product_ids, f"OrderItems references nonexistent product_id {oi['product_id']}"
         assert oi["quantity"] > 0, f"OrderItem quantity must be > 0, got {oi['quantity']}"
         assert oi["price"] > 0, f"OrderItem price must be > 0, got {oi['price']}"
-        assert oi["order_id"] in order_ids, f"Invalid order_id {oi['order_id']} in OrderItems"
-        assert oi["product_id"] in product_ids, f"Invalid product_id {oi['product_id']} in OrderItems"
 
-    # 5) Suppliers + ProductSuppliers: supply_price > 0, references valid product_id & supplier_id
-    supplier_ids = {row["supplier_id"] for row in data.get("Suppliers", [])}
+    # 5) Suppliers => supply minimal checks
+    supplier_ids = set()
+    for sup in data.get("Suppliers", []):
+        sid = sup["supplier_id"]
+        supplier_ids.add(sid)
+        # If you want, check contact_email format
+        contact_email = sup.get("contact_email")
+        if contact_email:
+            assert re.match(r'^[\w\.-]+@[\w\.-]+\.\w{2,}$', contact_email), (
+                f"Invalid supplier contact_email {contact_email}"
+            )
+
+    # 6) ProductSuppliers => references Products, Suppliers
     for ps in data.get("ProductSuppliers", []):
-        assert ps["product_id"] in product_ids, f"Invalid product_id {ps['product_id']} in ProductSuppliers"
-        assert ps["supplier_id"] in supplier_ids, f"Invalid supplier_id {ps['supplier_id']} in ProductSuppliers"
-        assert ps["supply_price"] > 0, f"supply_price must be > 0, got {ps['supply_price']}"
+        assert ps["product_id"] in product_ids, (
+            f"ProductSuppliers references nonexistent product_id {ps['product_id']}"
+        )
+        assert ps["supplier_id"] in supplier_ids, (
+            f"ProductSuppliers references nonexistent supplier_id {ps['supplier_id']}"
+        )
+        supply_price = ps["supply_price"]
+        assert supply_price > 0, f"Supply price must be > 0, got {supply_price}"
