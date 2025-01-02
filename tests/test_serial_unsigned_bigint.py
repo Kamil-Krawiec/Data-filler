@@ -96,16 +96,14 @@ def test_parse_seats_table(seats_table_parsed):
     assert "VARCHAR(3)" in id2_col["type"], "Expected 'id2' to be VARCHAR(3)."
     assert "PRIMARY KEY" in id2_col["constraints"], "Expected 'id2' to have PRIMARY KEY."
 
-    # 3) Verify 'seat' is INT UNSIGNED => is_unsigned = True
+    # 3) Verify 'seat' is INT UNSIGNED => UINT
     seat_col = columns["seat"]
-    assert "INT" in seat_col["type"], "seat column should be INT-based."
-    assert seat_col.get("is_unsigned") is True, "seat should be marked as UNSIGNED."
+    assert "UINT" in seat_col["type"], "seat column should be INT-based."
     assert "NOT NULL" in seat_col["constraints"], "seat should be NOT NULL."
 
-    # 4) Verify 'theater_id' is BIGINT UNSIGNED => is_unsigned = True
+    # 4) Verify 'theater_id' is BIGINT UNSIGNED => UBIGINT
     theater_col = columns["theater_id"]
-    assert "BIGINT" in theater_col["type"], "theater_id should be BIGINT-based."
-    assert theater_col.get("is_unsigned") is True, "theater_id should be UNSIGNED."
+    assert "UBIGINT" in theater_col["type"], "theater_id should be UNSIGNED."
     assert "NOT NULL" in theater_col["constraints"], "theater_id should be NOT NULL."
 
 

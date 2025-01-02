@@ -267,28 +267,77 @@ class DataGenerator:
 
     def assign_foreign_keys(self, table: str, row: dict):
         """
-        Automatically assign foreign key values to a table row based on established relationships.
-
-        Args:
-            table (str): The name of the table where the row resides.
-            row (dict): The dictionary representing the row data to be populated with foreign key values.
+        Automatically assign foreign key values to a table row based on
+        established relationships, including support for composite keys
+        and partially pre-filled columns.
         """
         fks = self.tables[table].get('foreign_keys', [])
         for fk in fks:
-            fk_columns = fk['columns']
-            ref_table = fk['ref_table']
-            ref_columns = fk['ref_columns']
-            if ref_table in self.generated_data and ref_columns:
-                # Skip assigning if FK columns are already set (e.g., in composite PKs)
-                if all(col in row for col in fk_columns):
+            fk_columns = fk['columns']  # e.g. ['row', 'seat', 'theater_id']
+            ref_table = fk['ref_table']  # e.g. 'Seats'
+            ref_columns = fk['ref_columns']  # e.g. ['row', 'seat', 'theater_id']
+
+            # We'll check child's existing FK columns to see if they're set
+            child_values = [row.get(fc) for fc in fk_columns]
+            all_set = all(v is not None for v in child_values)
+            partially_set = any(v is not None for v in child_values) and not all_set
+
+            # Potential parent rows
+            parent_data = self.generated_data[ref_table]
+
+            # ─────────────────────────────────────────
+            # 1) If all columns are already set, see if there's a matching parent row
+            # ─────────────────────────────────────────
+            if all_set:
+                matching_parents = [
+                    p for p in parent_data
+                    if all(p[rc] == row[fc] for rc, fc in zip(ref_columns, fk_columns))
+                ]
+                if matching_parents:
+                    # We do nothing: child's columns already match a valid parent
                     continue
-                ref_record = random.choice(self.generated_data[ref_table])
-                for idx, fk_col in enumerate(fk_columns):
-                    ref_col = ref_columns[idx]
-                    row[fk_col] = ref_record[ref_col]
-            else:
-                for fk_col in fk_columns:
-                    row[fk_col] = None
+                else:
+                    # No match found → pick a valid random parent & overwrite child's columns
+                    chosen_parent = random.choice(parent_data)
+                    for rc, fc in zip(ref_columns, fk_columns):
+                        row[fc] = chosen_parent[rc]
+                continue
+
+            # ─────────────────────────────────────────
+            # 2) If *some* columns are set (partial), do a partial match
+            # ─────────────────────────────────────────
+            if partially_set:
+                possible_parents = []
+                for p in parent_data:
+                    is_candidate = True
+                    for rc, fc in zip(ref_columns, fk_columns):
+                        child_val = row.get(fc)
+                        # If child_val is set, parent must match
+                        if child_val is not None and p[rc] != child_val:
+                            is_candidate = False
+                            break
+                    if is_candidate:
+                        possible_parents.append(p)
+
+                if not possible_parents:
+                    # No partial match => pick random parent
+                    chosen_parent = random.choice(parent_data)
+                else:
+                    # Among partial matches, pick one at random
+                    chosen_parent = random.choice(possible_parents)
+
+                # Fill any missing columns from the chosen parent
+                for rc, fc in zip(ref_columns, fk_columns):
+                    if row.get(fc) is None:
+                        row[fc] = chosen_parent[rc]
+                continue
+
+            # ─────────────────────────────────────────
+            # 3) If none of the columns are set, pick a random parent row
+            # ─────────────────────────────────────────
+            chosen_parent = random.choice(parent_data)
+            for rc, fc in zip(ref_columns, fk_columns):
+                row[fc] = chosen_parent[rc]
 
     def fill_remaining_columns(self, table: str, row: dict):
         """

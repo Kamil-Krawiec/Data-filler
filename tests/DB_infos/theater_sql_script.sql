@@ -12,7 +12,7 @@ CREATE TABLE Seats (
     seat INT NOT NULL,
     theater_id BIGINT UNSIGNED NOT NULL,
     CONSTRAINT unique_row_seat UNIQUE (row, seat, theater_id),
-    CONSTRAINT fk_seats_theaters FOREIGN KEY (theater_id) REFERENCES theaters(theater_id)
+    CONSTRAINT fk_seats_theaters FOREIGN KEY (theater_id) REFERENCES Theaters(theater_id)
 );
 
 
