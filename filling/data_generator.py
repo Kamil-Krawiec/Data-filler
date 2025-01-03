@@ -192,27 +192,38 @@ class DataGenerator:
                     if ref_data:
                         pk_values[pk] = [row[ref_column] for row in ref_data]
                     else:
-                        # If referenced table has no data, assign None or handle accordingly
+                        # If referenced table has no data, assign None
                         pk_values[pk] = [None]
                 else:
-                    # If foreign key references a non-existent table, assign None or handle accordingly
+                    # If FK references a non-existent table, assign None
                     pk_values[pk] = [None]
             else:
-                # Generate a range of values for the primary key column
-                pk_values[pk] = list(range(1, num_rows + 1))
+                col_info = self.get_column_info(table, pk)
+                constraints = col_info.get('constraints', [])
 
-        # Generate all possible combinations of primary key values
-        combinations = list(itertools.product(*(pk_values[pk] for pk in pk_columns)))
+                # We'll produce num_rows possible values by calling generate_column_value each time.
+                generated_list = []
+                for _ in range(num_rows):
+                    # We pass a temporary empty row (or partial row) to generate_column_value
+                    val = self.generate_column_value(table, col_info, {}, constraints)
+                    generated_list.append(val)
+
+                pk_values[pk] = generated_list
+
+        # Now produce the Cartesian product of all PK columns
+        combinations = list(set(itertools.product(*(pk_values[pk] for pk in pk_columns))))
         random.shuffle(combinations)
 
-        # Adjust the number of rows if not enough unique combinations
+        # Adjust if not enough unique combinations
         max_possible_rows = len(combinations)
         if max_possible_rows < num_rows:
             print(
-                f"Not enough unique combinations for composite primary key in table '{table}'. Adjusting number of rows to {max_possible_rows}.")
+                f"Not enough unique combinations for composite primary key in table '{table}'. "
+                f"Adjusting number of rows to {max_possible_rows}."
+            )
             num_rows = max_possible_rows
 
-        # Generate rows using the unique combinations
+        # Create rows using the chosen number of combinations
         for i in range(num_rows):
             row = {}
             for idx, pk in enumerate(pk_columns):
