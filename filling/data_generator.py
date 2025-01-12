@@ -1,4 +1,5 @@
 import itertools
+import random
 from datetime import datetime, date, timedelta
 
 from faker import Faker
@@ -657,10 +658,14 @@ class DataGenerator:
                 pass
 
         # Generate initial value based on min and max
-        if 'INT' in col_type or 'DECIMAL' in col_type or 'NUMERIC' in col_type:
+        if 'INT' in col_type:
             min_value = min_value if min_value is not None else 1
             max_value = max_value if max_value is not None else 10000
             generated_value = random.randint(int(min_value), int(max_value))
+        elif 'DECIMAL' in col_type or 'NUMERIC' in col_type:
+            min_value = min_value if min_value is not None else 1
+            max_value = max_value if max_value is not None else 10000
+            generated_value = random.uniform(int(min_value), int(max_value))
         elif 'DATE' in col_type:
             min_date = min_value if isinstance(min_value, date) else date(1900, 1, 1)
             max_date = max_value if isinstance(max_value, date) else date.today()
@@ -739,11 +744,13 @@ class DataGenerator:
         self.print_statistics()
         return self.generated_data
 
-    def export_as_sql_insert_query(self) -> str:
+    def export_as_sql_insert_query(self, max_rows_per_insert: int = 1000) -> str:
         """
-        Export the generated synthetic data as SQL INSERT queries.
+        Export the generated synthetic data as SQL INSERT queries, splitting rows into chunks
+        of `max_rows_per_insert` to avoid exceeding database limits on a single INSERT.
 
-        This method formats the generated data into executable SQL INSERT statements, allowing for easy population of the target PostgreSQL database.
+        Args:
+            max_rows_per_insert (int, optional): Max number of rows per INSERT statement. Defaults to 1000.
 
         Returns:
             str: A string containing SQL INSERT queries for all populated tables.
@@ -756,36 +763,38 @@ class DataGenerator:
 
             # Get column names from the table schema
             columns = [col['name'] for col in self.tables[table_name]['columns']]
-
-            # Start constructing the INSERT statement
             insert_prefix = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES"
 
-            # Collect values for each record
-            values_list = []
-            for record in records:
-                values = []
-                for col in columns:
-                    value = record.get(col)
-                    if value is None:
-                        values.append('NULL')
-                    elif isinstance(value, str):
-                        # Escape single quotes in strings
-                        escaped_value = value.replace("'", "''")
-                        values.append(f"'{escaped_value}'")
-                    elif isinstance(value, datetime):
-                        values.append(f"'{value.strftime('%Y-%m-%d %H:%M:%S')}'")
-                    elif isinstance(value, date):
-                        values.append(f"'{value.strftime('%Y-%m-%d')}'")
-                    elif isinstance(value, bool):
-                        values.append('TRUE' if value else 'FALSE')
-                    else:
-                        values.append(str(value))
-                values_str = f"({', '.join(values)})"
-                values_list.append(values_str)
+            # We'll chunk the records into slices of size max_rows_per_insert
+            for i in range(0, len(records), max_rows_per_insert):
+                chunk = records[i: i + max_rows_per_insert]
 
-            # Combine the INSERT prefix and values
-            insert_query = f"{insert_prefix}\n" + ",\n".join(values_list) + ";"
-            insert_queries.append(insert_query)
+                values_list = []
+                for record in chunk:
+                    row_values = []
+                    for col in columns:
+                        value = record.get(col)
+                        if value is None:
+                            row_values.append('NULL')
+                        elif isinstance(value, str):
+                            # Escape single quotes in strings
+                            escaped_value = value.replace("'", "''")
+                            row_values.append(f"'{escaped_value}'")
+                        elif isinstance(value, datetime):
+                            row_values.append(f"'{value.strftime('%Y-%m-%d %H:%M:%S')}'")
+                        elif isinstance(value, date):
+                            row_values.append(f"'{value.strftime('%Y-%m-%d')}'")
+                        elif isinstance(value, bool):
+                            row_values.append('TRUE' if value else 'FALSE')
+                        else:
+                            row_values.append(str(value))
+
+                    values_str = f"({', '.join(row_values)})"
+                    values_list.append(values_str)
+
+                # Combine the prefix and the chunk of values
+                insert_query = f"{insert_prefix}\n" + ",\n".join(values_list) + ";"
+                insert_queries.append(insert_query)
 
         # Combine all INSERT queries into a single string
         return "\n\n".join(insert_queries)
