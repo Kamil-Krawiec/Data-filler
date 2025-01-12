@@ -163,18 +163,16 @@ class DataGenerator:
             pk_columns = self.tables[table].get('primary_key', [])
 
             if len(pk_columns) == 1:
-                for _ in range(num_rows):
-                    row = {}
-                    self.generate_primary_keys(table, row)
-                    self.generated_data[table].append(row)
+                # Use the new approach: generate the PKs all at once
+                self.generate_primary_keys(table, num_rows)
+
             elif len(pk_columns) > 1:
-                # Composite primary key; generate combinations
+                # Composite PK => use generate_composite_primary_keys
                 self.generate_composite_primary_keys(table, num_rows)
             else:
-                # No primary key; generate rows without primary key assignment
+                # No primary key => generate empty rows
                 for _ in range(num_rows):
-                    row = {}
-                    self.generated_data[table].append(row)
+                    self.generated_data[table].append({})
 
     def generate_composite_primary_keys(self, table: str, num_rows: int):
         pk_columns = self.tables[table]['primary_key']
@@ -230,28 +228,55 @@ class DataGenerator:
                 row[pk] = combinations[i][idx]
             self.generated_data[table].append(row)
 
-    def generate_primary_keys(self, table: str, row: dict):
+    def generate_primary_keys(self, table: str, num_rows: int):
         """
-        Assign unique primary key values to a given row in a specified table.
-        If the PK column is_serial=True, we treat it as auto-increment integer.
-        Otherwise, we might generate something else (e.g., random strings).
+        Pre-generate primary keys for single-column PK tables, or auto-increment if numeric.
+        Then assign them to rows in self.generated_data[table].
         """
         pk_columns = self.tables[table].get('primary_key', [])
-        for pk_col in pk_columns:
-            col_info = self.get_column_info(table, pk_col)
-            if not col_info:
-                continue
-            col_type = col_info['type'].upper()
+        if len(pk_columns) != 1:
+            return  # We'll handle composite PK elsewhere (e.g. generate_composite_primary_keys)
 
-            # is_serial or numeric => auto-increment
-            if col_info.get("is_serial") or re.search(r'(INT|BIGINT|SMALLINT|DECIMAL|NUMERIC)', col_type):
-                row[pk_col] = self.primary_keys[table][pk_col]
-                self.primary_keys[table][pk_col] += 1
-            else:
-                # It's a non-numeric PK, so generate text or whatever is suitable
-                length_match = re.search(r'\((\d+)\)', col_type)
-                length = int(length_match.group(1)) if length_match else 5
-                row[pk_col] = self.fake.lexify(text='?' * length)
+        pk_col = pk_columns[0]
+        col_info = self.get_column_info(table, pk_col)
+        if not col_info:
+            return
+
+        col_type = col_info['type'].upper()
+        # We'll store our new rows in a temporary list (instead of the row-by-row approach)
+        new_rows = []
+
+        if col_info.get("is_serial") or re.search(r'(INT|BIGINT|SMALLINT|DECIMAL|NUMERIC)', col_type):
+            # Numeric or is_serial => auto-increment
+            start_val = self.primary_keys[table][pk_col]
+            for i in range(num_rows):
+                row = {pk_col: start_val + i}
+                new_rows.append(row)
+            # Update the counter
+            self.primary_keys[table][pk_col] = start_val + num_rows
+
+        else:
+            # Non-numeric PK => let's generate num_rows distinct values
+            constraints = col_info.get('constraints', [])
+            used_values = set()
+            values_list = []
+
+            # Keep generating until we have exactly num_rows unique values
+            # (If your column has extremely narrow constraints, you might not achieve this,
+            #  so you could add logic for fallback or error out.)
+            while len(values_list) < num_rows:
+                tmp_val = self.generate_column_value(table, col_info, {}, constraints)
+                if tmp_val not in used_values:
+                    used_values.add(tmp_val)
+                    values_list.append(tmp_val)
+
+            # Now assign them row by row
+            for val in values_list:
+                row = {pk_col: val}
+                new_rows.append(row)
+
+        # Finally, store the new rows
+        self.generated_data[table] = new_rows
 
     def enforce_constraints(self):
         """
