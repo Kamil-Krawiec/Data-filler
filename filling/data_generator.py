@@ -1,11 +1,17 @@
 import itertools
-import random
+import logging
 from datetime import datetime, date, timedelta
 
 from faker import Faker
 
 from .check_constraint_evaluator import CheckConstraintEvaluator
 from .helpers import *
+import logging
+
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+logger = logging.getLogger(__name__)
 
 ParserElement.enablePackrat()
 
@@ -145,6 +151,7 @@ class DataGenerator:
                 deps.difference_update(no_deps)
 
         return table_order
+
     def initialize_primary_keys(self):
         """
         Initialize primary key counters for each table to ensure unique identifier generation.
@@ -216,7 +223,7 @@ class DataGenerator:
         # Adjust if not enough unique combinations
         max_possible_rows = len(combinations)
         if max_possible_rows < num_rows:
-            print(
+            logger.info(
                 f"Not enough unique combinations for composite primary key in table '{table}'. "
                 f"Adjusting number of rows to {max_possible_rows}."
             )
@@ -729,19 +736,22 @@ class DataGenerator:
                 return col
         return None
 
-    def generate_data(self) -> dict:
-        """
-        Execute the complete data generation process, including initial data creation and constraint enforcement.
-
-        This method orchestrates the entire workflow of data generation, ensuring that all tables are populated in the correct order and that all constraints are duly enforced.
-
-        Returns:
-            dict: A dictionary containing the generated data for each table, structured by table name.
-        """
+    def generate_data(self, run_repair=True, print_stats=True) -> dict:
+        logger.info("Starting data generation process.")
+        logger.info("Generating initial data...")
         self.generate_initial_data()
+        logger.info("Initial data generation completed.")
+        logger.info("Enforcing constraints...")
         self.enforce_constraints()
-        self.repair_data()
-        self.print_statistics()
+        logger.info("Constraints enforced.")
+        if run_repair:
+            logger.info("Repairing data to remove violations...")
+            self.repair_data()
+            logger.info("Data repair process completed.")
+        if print_stats:
+            logger.info("Printing data generation statistics...")
+            self.print_statistics()
+        logger.info("Data generation process finished.")
         return self.generated_data
 
     def export_as_sql_insert_query(self, max_rows_per_insert: int = 1000) -> str:
@@ -823,14 +833,14 @@ class DataGenerator:
                 valid_rows.append(row)
             else:
                 deleted_rows += 1
-                print(f"[Repair] Row deleted from table '{table}' due to constraint violation:")
-                print(f"    Row data: {row}")
-                print(f"    Violated constraint: {violated_constraint}")
+                logger.info(f"[Repair] Row deleted from table '{table}' due to constraint violation:")
+                logger.info(f"    Row data: {row}")
+                logger.info(f"    Violated constraint: {violated_constraint}")
                 # Remove dependent data in child tables
                 self.remove_dependent_data(table, row)
         self.generated_data[table] = valid_rows
         if deleted_rows > 0:
-            print(f"[Repair] Deleted {deleted_rows} row(s) from table '{table}' during repair.")
+            logger.info(f"[Repair] Deleted {deleted_rows} row(s) from table '{table}' during repair.")
 
     def is_row_valid(self, table: str, row: dict) -> tuple:
         """
@@ -895,13 +905,13 @@ class DataGenerator:
                     valid_child_rows.append(child_row)
                 else:
                     deleted_rows += 1
-                    print(
+                    logger.info(
                         f"[Repair] Row deleted from table '{child_table}' due to parent row deletion in '{table}': {child_row}")
                     # Recursively remove dependent data in lower-level child tables
                     self.remove_dependent_data(child_table, child_row)
 
             if deleted_rows > 0:
-                print(
+                logger.info(
                     f"[Repair] Deleted {deleted_rows} dependent row(s) from table '{child_table}' due to deletions in '{table}'.")
             self.generated_data[child_table] = valid_child_rows
 
@@ -911,7 +921,7 @@ class DataGenerator:
 
         This method provides a summary of the data generation process, helping users understand the scope and distribution of the synthetic data created.
         """
-        print("\nData Generation Statistics:")
+        logger.info("Data Generation Statistics:")
         for table in self.table_order:
             row_count = len(self.generated_data.get(table, []))
-            print(f"Table '{table}': {row_count} row(s) generated.")
+            logger.info(f"Table '{table}': {row_count} row(s) generated.")
