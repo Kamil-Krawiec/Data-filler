@@ -55,6 +55,8 @@ class DataGenerator:
         self.foreign_key_map = self.build_foreign_key_map()
         self.predefined_values = predefined_values or {}
         self.column_type_mappings = column_type_mappings or {}
+        self.column_info_cache = {}
+        self.foreign_key_cache = {}
 
     def build_foreign_key_map(self) -> dict:
         """
@@ -731,10 +733,12 @@ class DataGenerator:
         Returns:
             dict: A dictionary containing the column's schema details.
         """
-        for col in self.tables[table]['columns']:
-            if col['name'] == col_name:
-                return col
-        return None
+        key = (table, col_name)
+        if key not in self.column_info_cache:
+            column_info = next((col for col in self.tables[table]['columns'] if col['name'] == col_name), None)
+            self.column_info_cache[key] = column_info
+        return self.column_info_cache[key]
+
 
     def generate_data(self, run_repair=True, print_stats=True) -> dict:
         logger.info("Starting data generation process.")
