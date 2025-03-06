@@ -14,6 +14,13 @@ from sqlglot.expressions import (
     CheckColumnConstraint
 )
 
+import logging
+
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+
+logger = logging.getLogger(__name__)
+
 
 def parse_create_tables(sql_script, dialect='postgres'):
     """
@@ -79,7 +86,10 @@ def parse_create_tables(sql_script, dialect='postgres'):
     """
 
     # Parse the SQL script with the appropriate dialect (e.g., 'postgres' or 'mysql')
+    logger.info("Starting to parse SQL script with dialect '%s'", dialect)
+
     parsed = sqlglot.parse(sql_script, read=dialect)
+    logger.info("Parsed %d statements from SQL script.", len(parsed))
     tables = {}
 
     for statement in parsed:
@@ -92,13 +102,14 @@ def parse_create_tables(sql_script, dialect='postgres'):
             table_expr = schema.this
             if not isinstance(table_expr, Table):
                 continue  # Not a table, skip it
-
             table_name = table_expr.name
             columns = []
             table_foreign_keys = []
             table_unique_constraints = []
             table_primary_key = []
             table_checks = []
+            logger.info("Parsing table '%s'", table_name)
+
 
             for expression in schema.expressions:
                 # ─────────────────────────────────────────────────────────────
@@ -289,5 +300,5 @@ def parse_create_tables(sql_script, dialect='postgres'):
                 "unique_constraints": table_unique_constraints,
                 "check_constraints": table_checks
             }
-
+    logger.info("Finished parsing SQL script, found %d tables.", len(tables))
     return tables
