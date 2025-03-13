@@ -81,7 +81,7 @@ def employees_tables_parsed(employees_sql_script):
     Parse the CREATE TABLE statements using your parse_create_tables() function.
     Returns a dict of table definitions.
     """
-    return parse_create_tables(employees_sql_script)
+    return parse_create_tables(employees_sql_script, dialect='mysql')
 
 @pytest.fixture
 def employees_data_generator(employees_tables_parsed):
