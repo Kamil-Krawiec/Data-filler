@@ -1,9 +1,9 @@
-pandas
-numpy
+pandas <= 2.2.3
+numpy >= 2.2.3
 Faker>=30.3.0
-sqlparse
-sqlglot
+sqlparse <= 0.5.3
+sqlglot <=26.0.0
 networkx
-pyparsing
+pyparsing<= 3.2.1
 exrex
-pytest
+pytest <= 8.0.0
