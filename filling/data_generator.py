@@ -1,6 +1,7 @@
 import itertools
 import logging
 from datetime import datetime, date, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from faker import Faker
 
@@ -288,28 +289,49 @@ class DataGenerator:
         # Finally, store the new rows
         self.generated_data[table] = new_rows
 
+    def process_row(self, table: str, row: dict) -> dict:
+        """
+        Process a single row for a given table by assigning foreign keys,
+        filling remaining columns, and enforcing NOT NULL and CHECK constraints.
+        (Unique constraints are enforced later sequentially.)
+        """
+        self.assign_foreign_keys(table, row)
+        self.fill_remaining_columns(table, row)
+        self.enforce_not_null_constraints(table, row)
+        self.enforce_check_constraints(table, row)
+        return row
+
     def enforce_constraints(self):
         """
         Enforce all defined constraints on the generated data across all tables.
-
-        This method applies NOT NULL, UNIQUE, and CHECK constraints to ensure data integrity. It also manages the assignment of foreign keys based on established relationships.
+        This method applies NOT NULL and CHECK constraints in parallel per row,
+        then enforces UNIQUE constraints sequentially to avoid race conditions.
         """
         for table in self.table_order:
+            # Set up unique constraints for the table
             self.unique_values[table] = {}
             unique_constraints = self.tables[table].get('unique_constraints', []).copy()
-            # Include primary keys in unique constraints
             primary_key = self.tables[table].get('primary_key', [])
             if primary_key:
                 unique_constraints.append(primary_key)
             for unique_cols in unique_constraints:
                 self.unique_values[table][tuple(unique_cols)] = set()
 
-            for row in self.generated_data[table]:
-                self.assign_foreign_keys(table, row)
-                self.fill_remaining_columns(table, row)
-                self.enforce_not_null_constraints(table, row)
+            rows = self.generated_data[table]
+            processed_rows = [None] * len(rows)
+
+            # Process each row in parallel while preserving order.
+            with ThreadPoolExecutor() as executor:
+                futures = {executor.submit(self.process_row, table, row): i for i, row in enumerate(rows)}
+                for future in as_completed(futures):
+                    idx = futures[future]
+                    processed_rows[idx] = future.result()
+
+            # Enforce UNIQUE constraints sequentially (to avoid concurrency issues)
+            for row in processed_rows:
                 self.enforce_unique_constraints(table, row)
-                self.enforce_check_constraints(table, row)
+
+            self.generated_data[table] = processed_rows
 
     def assign_foreign_keys(self, table: str, row: dict):
         """
@@ -738,7 +760,6 @@ class DataGenerator:
             column_info = next((col for col in self.tables[table]['columns'] if col['name'] == col_name), None)
             self.column_info_cache[key] = column_info
         return self.column_info_cache[key]
-
 
     def generate_data(self, run_repair=True, print_stats=True) -> dict:
         logger.info("Starting data generation process.")
