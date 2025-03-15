@@ -85,9 +85,7 @@ def parse_create_tables(sql_script, dialect='postgres'):
         }
     """
 
-    # Parse the SQL script with the appropriate dialect (e.g., 'postgres' or 'mysql')
     logger.info("Starting to parse SQL script with dialect '%s'", dialect)
-
     parsed = sqlglot.parse(sql_script, read=dialect)
     logger.info("Parsed %d statements from SQL script.", len(parsed))
     tables = {}
@@ -110,13 +108,16 @@ def parse_create_tables(sql_script, dialect='postgres'):
             table_checks = []
             logger.info("Parsing table '%s'", table_name)
 
-
             for expression in schema.expressions:
                 # ─────────────────────────────────────────────────────────────
                 # 1) COLUMN DEFINITIONS
                 # ─────────────────────────────────────────────────────────────
                 if isinstance(expression, ColumnDef):
-                    col_name = expression.this.name
+                    # Get the column name, fallback if empty
+                    col_name = getattr(expression.this, "name", "").strip()
+                    if not col_name:
+                        col_name = f"col_{len(columns) + 1}"
+                        logger.warning("Column definition missing name; using default '%s'", col_name)
                     data_type = expression.args.get("kind").sql().upper()  # e.g. "INT UNSIGNED", "SERIAL"
                     constraints = expression.args.get("constraints", [])
 
@@ -130,7 +131,6 @@ def parse_create_tables(sql_script, dialect='postgres'):
                     }
 
                     # Check if data_type itself is 'SERIAL'
-                    # (or might contain it, e.g. "BIGSERIAL")
                     if "SERIAL" in data_type:
                         column_info["is_serial"] = True
 
@@ -141,12 +141,10 @@ def parse_create_tables(sql_script, dialect='postgres'):
                             table_primary_key.append(col_name)
                             column_info["constraints"].append("PRIMARY KEY")
                             table_unique_constraints.append([col_name])
-
                         # UNIQUE constraint
                         elif isinstance(constraint.kind, UniqueColumnConstraint):
                             table_unique_constraints.append([col_name])
                             column_info["constraints"].append("UNIQUE")
-
                         # FOREIGN KEY constraint
                         elif isinstance(constraint.kind, ForeignKey):
                             references = constraint.args.get("reference")
@@ -165,7 +163,6 @@ def parse_create_tables(sql_script, dialect='postgres'):
                             else:
                                 ref_table = None
                                 ref_columns = []
-
                             column_info["foreign_key"] = {
                                 "columns": [col_name],
                                 "ref_table": ref_table,
@@ -175,27 +172,32 @@ def parse_create_tables(sql_script, dialect='postgres'):
                             column_info["constraints"].append(
                                 f"FOREIGN KEY REFERENCES {ref_table}({', '.join(ref_columns)})"
                             )
-
                         # CHECK constraint
                         elif isinstance(constraint.kind, CheckColumnConstraint):
-                            check_expression = constraint.args.get("this").sql()
-                            table_checks.append(check_expression)
-                            column_info["constraints"].append(f"CHECK ({check_expression})")
-
+                            check_expression = constraint.args.get("this")
+                            if check_expression:
+                                # `check_expression.sql()` is the raw expression without "CHECK(...)"
+                                expr_sql = check_expression.sql()
+                                table_checks.append(expr_sql)
+                                column_info["constraints"].append(f"CHECK ({expr_sql})")
+                            else:
+                                # If it's somehow None, fallback to raw constraint.sql()
+                                raw_sql = constraint.sql()
+                                # Attempt to parse out the contents of CHECK(...)
+                                match = re.search(r'CHECK\s*\((.+)\)', raw_sql, re.IGNORECASE)
+                                if match:
+                                    extracted_expr = match.group(1).strip()
+                                    table_checks.append(extracted_expr)
+                                    column_info["constraints"].append(f"CHECK ({extracted_expr})")
                         # NOT NULL constraint
                         elif isinstance(constraint.kind, NotNullColumnConstraint):
                             column_info["constraints"].append("NOT NULL")
-
                         else:
                             # Other constraint types or direct SQL
                             constraint_sql = constraint.sql().upper()
                             column_info["constraints"].append(constraint_sql)
-
-                            # If we see AUTO_INCREMENT in the constraint,
-                            # mark is_serial = True
                             if "AUTO_INCREMENT" in constraint_sql:
                                 column_info["is_serial"] = True
-
                     columns.append(column_info)
 
                 # ─────────────────────────────────────────────────────────────
@@ -219,22 +221,27 @@ def parse_create_tables(sql_script, dialect='postgres'):
                     else:
                         ref_table = None
                         ref_columns = []
-
                     table_foreign_keys.append({
                         "columns": fk_columns,
                         "ref_table": ref_table,
                         "ref_columns": ref_columns
                     })
-
                 # ─────────────────────────────────────────────────────────────
                 # 3) TABLE-LEVEL PRIMARY KEY
                 # ─────────────────────────────────────────────────────────────
                 elif isinstance(expression, PrimaryKey):
                     # e.g. PRIMARY KEY (col1, col2)
-                    pk_columns = [col.name for col in expression.expressions]
+                    pk_columns = []
+                    for idx, col in enumerate(expression.expressions):
+                        col_name = getattr(col, "name", "").strip()
+                        if not col_name:
+                            col_name = f"col_{idx + 1}"
+                            logger.warning(
+                                "Found primary key column with empty name in table '%s'. Using default '%s'.",
+                                table_expr.name, col_name)
+                        pk_columns.append(col_name)
                     table_primary_key.extend(pk_columns)
                     table_unique_constraints.append(pk_columns)
-
                 # ─────────────────────────────────────────────────────────────
                 # 4) TABLE-LEVEL CONSTRAINT (UNIQUE, PK, FK, CHECK, etc.)
                 # ─────────────────────────────────────────────────────────────
@@ -242,19 +249,21 @@ def parse_create_tables(sql_script, dialect='postgres'):
                     if not expression.expressions:
                         continue
                     first_expr = expression.expressions[0]
-
-                    # UNIQUE constraint
                     if isinstance(first_expr, UniqueColumnConstraint):
                         unique_columns = [col.name for col in first_expr.this.expressions]
                         table_unique_constraints.append(unique_columns)
-
-                    # PRIMARY KEY constraint
                     elif isinstance(first_expr, PrimaryKey):
-                        pk_columns = [col.name for col in first_expr.expressions]
+                        pk_columns = []
+                        for idx, col in enumerate(first_expr.expressions):
+                            col_name = getattr(col, "name", "").strip()
+                            if not col_name:
+                                col_name = f"col_{idx + 1}"
+                                logger.warning(
+                                    "Found primary key column with empty name in table '%s'. Using default '%s'.",
+                                    table_expr.name, col_name)
+                            pk_columns.append(col_name)
                         table_primary_key.extend(pk_columns)
                         table_unique_constraints.append(pk_columns)
-
-                    # FOREIGN KEY constraint
                     elif isinstance(first_expr, ForeignKey):
                         fk_columns = [col.name for col in first_expr.expressions]
                         references = first_expr.args.get("reference")
@@ -273,26 +282,22 @@ def parse_create_tables(sql_script, dialect='postgres'):
                         else:
                             ref_table = None
                             ref_columns = []
-
                         table_foreign_keys.append({
                             "columns": fk_columns,
                             "ref_table": ref_table,
                             "ref_columns": ref_columns
                         })
-
-                    # CHECK constraint
                     elif isinstance(first_expr, CheckColumnConstraint):
                         check_expression = first_expr.args.get("this").sql()
                         table_checks.append(check_expression)
-
+                    # You can add more handling as needed
                 # ─────────────────────────────────────────────────────────────
                 # 5) TABLE-LEVEL CHECK
-                # ─────────────────────────────────────────────────────────────
                 elif isinstance(expression, Check):
                     check_expression = expression.args.get("this").sql()
                     table_checks.append(check_expression)
 
-            # Finally, assemble the table metadata
+            # Assemble the table metadata
             tables[table_name] = {
                 "columns": columns,
                 "foreign_keys": table_foreign_keys,
