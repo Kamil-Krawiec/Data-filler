@@ -1,3 +1,5 @@
+import os
+import re
 import pytest
 import time
 import logging
@@ -14,7 +16,7 @@ logger.setLevel(logging.INFO)
 def complicated_schema_sql():
     """
     A more involved schema with multiple tables, composite primary keys,
-    foreign keys, and various CHECK constraints.
+    foreign keys, and various CHECK constraints (PostgreSQL dialect).
     """
     sql = """
     CREATE TABLE Publishers (
@@ -57,106 +59,28 @@ def complicated_schema_sql():
 
 @pytest.fixture
 def complicated_schema_tables(complicated_schema_sql):
-    # Use 'postgres' dialect to parse 'SERIAL'
+    """
+    Parse the complicated schema using the 'postgres' dialect.
+    """
     return parse_create_tables(complicated_schema_sql, dialect='postgres')
 
 
-def verify_complicated_schema_data(data, logger):
+@pytest.fixture
+def complicated_generator_params(complicated_schema_tables):
     """
-    Manually verify constraints for the 'complicated' schema.
-    data: dict of {table_name: [row_dict, ...]}
-
-    Returns a dictionary with counts of each violation type and total violations.
+    Define generator parameters for the complicated schema.
     """
-    # Build PK and FK references
-    publisher_ids = {row["publisher_id"] for row in data.get("Publishers", [])}
-    series_ids = set()
-    volumes_pk = set()
-    order_ids = set()
-
-    violations = {
-        "not_null": 0,
-        "check_constraint": 0,
-        "fk_violation": 0,
-        "pk_violation": 0
-    }
-
-    # Check Publishers
-    for row in data.get("Publishers", []):
-        if row["name"] is None or row["country"] is None:
-            violations["not_null"] += 1
-
-    # Check Series
-    for row in data.get("Series", []):
-        series_id = row["series_id"]
-        if series_id in series_ids:
-            violations["pk_violation"] += 1
-        else:
-            series_ids.add(series_id)
-        if row["publisher_id"] is None or row["series_name"] is None or row["start_year"] is None:
-            violations["not_null"] += 1
-        if row["publisher_id"] not in publisher_ids:
-            violations["fk_violation"] += 1
-        start_year = row["start_year"]
-        end_year = row["end_year"]
-        if start_year < 1900 or (end_year is not None and start_year > end_year):
-            violations["check_constraint"] += 1
-
-    # Check Volumes
-    for row in data.get("Volumes", []):
-        pk_tuple = (row["volume_num"], row["series_id"])
-        if pk_tuple in volumes_pk:
-            violations["pk_violation"] += 1
-        else:
-            volumes_pk.add(pk_tuple)
-        if (row["volume_num"] is None or row["series_id"] is None or
-                row["volume_title"] is None or row["issue_date"] is None):
-            violations["not_null"] += 1
-        if row["series_id"] not in series_ids:
-            violations["fk_violation"] += 1
-
-    # Check Orders
-    for row in data.get("Orders", []):
-        if row["order_id"] in order_ids:
-            violations["pk_violation"] += 1
-        else:
-            order_ids.add(row["order_id"])
-        if (row["volume_num"] is None or row["series_id"] is None or
-                row["order_quantity"] is None or row["order_date"] is None):
-            violations["not_null"] += 1
-        pk_tuple = (row["volume_num"], row["series_id"])
-        if pk_tuple not in volumes_pk:
-            violations["fk_violation"] += 1
-        if row["order_quantity"] <= 0:
-            violations["check_constraint"] += 1
-
-    total_violations = sum(violations.values())
-    return {
-        "not_null": violations["not_null"],
-        "check_constraint": violations["check_constraint"],
-        "fk_violation": violations["fk_violation"],
-        "pk_violation": violations["pk_violation"],
-        "total": total_violations
-    }
-
-
-def test_complicated_data_generation_with_and_without_repair(complicated_schema_tables):
-    """
-    Generate data for the 'complicated' schema with two independent DataGenerator
-    instances (one with repair and one without), measure generation times, verify constraints,
-    and log a summary table using the logger.
-    """
-    # Define parameters for the data generator
     num_rows_per_table = {
         "Publishers": 3000,
         "Series": 4000,
         "Volumes": 6000,
         "Orders": 10000
     }
+    predefined_values = {}
     column_type_mappings = {
         "Publishers": {
             "name": lambda fake, row: fake.company(),
-            "country": "country"
+            "country": lambda fake, row: fake.country()
         },
         "Series": {
             "series_name": lambda fake, row: f"{fake.word().capitalize()} Collection",
@@ -172,54 +96,67 @@ def test_complicated_data_generation_with_and_without_repair(complicated_schema_
             "order_date": lambda fake, row: fake.date_between(start_date="-2y", end_date="today")
         }
     }
+    return {
+        "tables": complicated_schema_tables,
+        "num_rows": 3000,
+        "predefined_values": predefined_values,
+        "column_type_mappings": column_type_mappings,
+        "num_rows_per_table": num_rows_per_table
+    }
 
-    # Create two separate DataGenerator instances
-    data_generator_with = DataGenerator(
-        tables=complicated_schema_tables,
-        num_rows=3000,
-        predefined_values={},
-        column_type_mappings=column_type_mappings,
-        num_rows_per_table=num_rows_per_table
-    )
 
-    data_generator_without = DataGenerator(
-        tables=complicated_schema_tables,
-        num_rows=3000,
-        predefined_values={},
-        column_type_mappings=column_type_mappings,
-        num_rows_per_table=num_rows_per_table
-    )
+def log_complicated_summary(data, generation_time, mode):
+    """
+    Log a summary table of generated row counts per table and generation time.
+    """
+    logger.info("\n===== COMPLICATED SCHEMA DATA GENERATION (%s) RESULTS =====", mode)
+    logger.info("{:<15} | {:>10}".format("Table", "Row Count"))
+    logger.info("-" * 30)
+    for table, rows in data.items():
+        logger.info("{:<15} | {:>10}".format(table, len(rows)))
+    logger.info("{:<15} | {:>10.2f}".format("Time (s)", generation_time))
+    logger.info("-" * 30)
 
-    # Generate data with repair enabled
-    start_repair = time.time()
+
+def test_complicated_data_generation_with_repair(complicated_generator_params):
+    """
+    Standalone test for complicated schema data generation with repair enabled.
+    Verifies that no constraint violations remain and logs a summary table.
+    """
+    data_generator_with = DataGenerator(**complicated_generator_params)
+    start = time.time()
     data_with_repair = data_generator_with.generate_data(run_repair=True, print_stats=False)
-    time_repair = time.time() - start_repair
-    repair_violations = verify_complicated_schema_data(data_with_repair, logger)
+    generation_time = time.time() - start
 
-    # Generate data without repair enabled
-    start_no_repair = time.time()
+    total_violations = 0
+    for table, rows in data_with_repair.items():
+        for row in rows:
+            valid, msg = data_generator_with.is_row_valid(table, row)
+            if not valid:
+                total_violations += 1
+                logger.info("Repaired row in table '%s' violates constraint: %s", table, msg)
+
+    log_complicated_summary(data_with_repair, generation_time, mode="WITH REPAIR")
+    assert total_violations == 0, "Constraint violations found in repaired data!"
+
+
+def test_complicated_data_generation_without_repair(complicated_generator_params):
+    """
+    Standalone test for complicated schema data generation without repair.
+    Logs a summary table along with total constraint violations.
+    """
+    data_generator_without = DataGenerator(**complicated_generator_params)
+    start = time.time()
     data_without_repair = data_generator_without.generate_data(run_repair=False, print_stats=False)
-    time_no_repair = time.time() - start_no_repair
-    norepair_violations = verify_complicated_schema_data(data_without_repair, logger)
+    generation_time = time.time() - start
 
-    # Log summary table using the logger
-    logger.info("\n===== COMPLICATED SCHEMA TEST RESULTS =====")
-    logger.info("{:<30} | {:>12} | {:>12}".format("Metric", "With Repair", "No Repair"))
-    logger.info("-" * 60)
-    logger.info("{:<30} | {:>12.2f} | {:>12.2f}".format("Generation Time (s)", time_repair, time_no_repair))
-    logger.info("{:<30} | {:>12} | {:>12}".format("Not Null Violations", repair_violations["not_null"],
-                                                  norepair_violations["not_null"]))
-    logger.info("{:<30} | {:>12} | {:>12}".format("Check Violations", repair_violations["check_constraint"],
-                                                  norepair_violations["check_constraint"]))
-    logger.info("{:<30} | {:>12} | {:>12}".format("FK Violations", repair_violations["fk_violation"],
-                                                  norepair_violations["fk_violation"]))
-    logger.info("{:<30} | {:>12} | {:>12}".format("PK/Unique Violations", repair_violations["pk_violation"],
-                                                  norepair_violations["pk_violation"]))
-    logger.info(
-        "{:<30} | {:>12} | {:>12}".format("TOTAL Violations", repair_violations["total"], norepair_violations["total"]))
-    logger.info("-" * 60)
+    violation_count = 0
+    for table, rows in data_without_repair.items():
+        for row in rows:
+            valid, msg = data_generator_without.is_row_valid(table, row)
+            if not valid:
+                violation_count += 1
+                logger.info("Unrepaired row in table '%s' violates constraint: %s", table, msg)
 
-    # Assert that repaired data has no violations
-    assert repair_violations["total"] == 0, (
-        f"Found {repair_violations['total']} total violations even after repair!"
-    )
+    log_complicated_summary(data_without_repair, generation_time, mode="WITHOUT REPAIR")
+    logger.info("Total constraint violations in unrepaired data: %d", violation_count)

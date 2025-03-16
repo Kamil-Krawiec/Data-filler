@@ -1,9 +1,7 @@
-import os
-import re
-import time
 import pytest
-from datetime import date
+import time
 import logging
+from datetime import date
 
 from parsing import parse_create_tables
 from filling import DataGenerator
@@ -44,17 +42,15 @@ def big_schema_sql():
 
 @pytest.fixture
 def big_schema_tables(big_schema_sql):
-    # Use 'postgres' dialect to support SERIAL types
     return parse_create_tables(big_schema_sql, dialect='postgres')
 
 
-# Instead of one fixture, we build the generator parameters as a fixture.
 @pytest.fixture
 def generator_params(big_schema_tables):
     num_rows_per_table = {
-        "Authors": 10000,
-        "Books": 20000,
-        "Reviews": 50000
+        "Authors": 100000,
+        "Books": 200000,
+        "Reviews": 100000
     }
     predefined_values = {}
     column_type_mappings = {
@@ -82,30 +78,49 @@ def generator_params(big_schema_tables):
     return params
 
 
-def test_big_data_generation_with_and_without_repair(generator_params):
-    # Create two separate DataGenerator instances using the same parameters.
+def test_big_data_generation_with_repair(generator_params):
+    """
+    Generate data for the big schema with repair enabled,
+    verify that every row satisfies constraints,
+    and log a summary table via the logger.
+    """
     data_generator_with = DataGenerator(**generator_params)
-    data_generator_without = DataGenerator(**generator_params)
-
-    # Generate data with repair enabled.
-    start_repair = time.time()
+    start = time.time()
     data_with_repair = data_generator_with.generate_data(run_repair=True, print_stats=False)
-    elapsed_repair = time.time() - start_repair
-    logger.info("Data generation WITH repair took %.2f seconds", elapsed_repair)
+    elapsed = time.time() - start
 
-    # Verify that every row in the repaired data satisfies constraints.
+    # Verify that every row in each table meets the constraints.
+    total_violations = 0
     for table, rows in data_with_repair.items():
         for row in rows:
             valid, message = data_generator_with.is_row_valid(table, row)
-            assert valid, f"Repaired row in table '{table}' violates constraint: {message}"
+            if not valid:
+                total_violations += 1
+                logger.info("Repaired row in table '%s' violates constraint: %s", table, message)
 
-    # Generate data without repair enabled.
-    start_no_repair = time.time()
+    # Log summary table using the logger.
+    logger.info("\n===== BIG SCHEMA WITH REPAIR TEST RESULTS =====")
+    logger.info("{:<30} | {:>12}".format("Metric", "With Repair"))
+    logger.info("-" * 45)
+    logger.info("{:<30} | {:>12.2f}".format("Generation Time (s)", elapsed))
+    logger.info("{:<30} | {:>12}".format("Total Constraint Violations", total_violations))
+    logger.info("-" * 45)
+
+    # Assert that repaired data has no constraint violations.
+    assert total_violations == 0, "Found constraint violations in repaired data!"
+
+
+def test_big_data_generation_without_repair(generator_params):
+    """
+    Generate data for the big schema without repair,
+    count and log constraint violations,
+    and output a summary table via the logger.
+    """
+    data_generator_without = DataGenerator(**generator_params)
+    start = time.time()
     data_without_repair = data_generator_without.generate_data(run_repair=False, print_stats=False)
-    elapsed_no_repair = time.time() - start_no_repair
-    logger.info("Data generation WITHOUT repair took %.2f seconds", elapsed_no_repair)
+    elapsed = time.time() - start
 
-    # Count constraint violations in the unrepaired data.
     violation_count = 0
     for table, rows in data_without_repair.items():
         for row in rows:
@@ -113,4 +128,10 @@ def test_big_data_generation_with_and_without_repair(generator_params):
             if not valid:
                 violation_count += 1
                 logger.info("Unrepaired row in table '%s' violates constraint: %s", table, message)
-    logger.info("Total constraint violations in unrepaired data: %d", violation_count)
+
+    logger.info("\n===== BIG SCHEMA WITHOUT REPAIR TEST RESULTS =====")
+    logger.info("{:<30} | {:>12}".format("Metric", "Without Repair"))
+    logger.info("-" * 45)
+    logger.info("{:<30} | {:>12.2f}".format("Generation Time (s)", elapsed))
+    logger.info("{:<30} | {:>12}".format("Total Constraint Violations", violation_count))
+    logger.info("-" * 45)
