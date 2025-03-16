@@ -1,48 +1,35 @@
 import itertools
 import logging
+import os
+import re
+import json
+import csv
+import random
 from datetime import datetime, date, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
 from faker import Faker
 
 from .check_constraint_evaluator import CheckConstraintEvaluator
-from .helpers import *
-import logging
+from .helpers import (
+    extract_regex_pattern, generate_value_matching_regex,
+    extract_allowed_values, extract_numeric_ranges,
+    generate_numeric_value
+)
 
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
 logger = logging.getLogger(__name__)
-
-ParserElement.enablePackrat()
 
 
 class DataGenerator:
     """
     Intelligent Data Generator for Automated Synthetic Database Population.
-
-    The `DataGenerator` class is a powerful tool designed to create realistic synthetic data for database tables based on provided schemas and constraints. It automates the entire data generation process, ensuring that all relational dependencies and data integrity rules are meticulously respected. This tool is especially useful for populating PostgreSQL databases during development, testing, or demonstration phases.
-
-    Key Features:
-    - **Dependency Management:** Automatically resolves and establishes foreign key relationships between tables.
-    - **Constraint Enforcement:** Adheres to all defined constraints, including NOT NULL, UNIQUE, CHECK, and FOREIGN KEY constraints.
-    - **Customizable Data Generation:** Supports predefined values and custom faker functions for tailored data generation.
-    - **Error Handling:** Implements a repair system to handle and rectify data inconsistencies by removing incompatible rows.
-    - **Extensibility:** Easily extendable to accommodate additional data types and constraints as needed.
     """
 
     def __init__(self, tables, num_rows=10, predefined_values=None, column_type_mappings=None,
                  num_rows_per_table=None):
-        """
-        Initialize the DataGenerator with table schemas and configuration settings.
-
-        Args:
-            tables (dict): Parsed table schemas containing table definitions and constraints.
-            num_rows (int, optional): Default number of rows to generate per table. Defaults to 10.
-            predefined_values (dict, optional): Predefined values for specific columns to ensure consistency. Defaults to None.
-            column_type_mappings (dict, optional): Mappings of column names to specific data generation functions or types. Defaults to None.
-            num_rows_per_table (dict, optional): Specific number of rows to generate for each table. Overrides `num_rows` if provided. Defaults to None.
-        """
         self.tables = tables
         self.num_rows = num_rows
         self.num_rows_per_table = num_rows_per_table or {}
@@ -950,3 +937,42 @@ class DataGenerator:
         for table in self.table_order:
             row_count = len(self.generated_data.get(table, []))
             logger.info(f"Table '{table}': {row_count} row(s) generated.")
+
+    def export_data_files(self, output_dir: str, file_type='SQL') -> None:
+        """
+        Export generated data as CSV and JSON for each table,
+        plus a single .sql file containing all insert statements.
+
+        Args:
+            output_dir (str): Directory to place the exported files.
+            file_type (str, optional): The type of export to perform ('SQL', 'CSV', 'JSON'). Defaults to 'SQL'.
+        """
+        file_type = file_type.upper()
+        os.makedirs(output_dir, exist_ok=True)
+        # 1) By default export a single SQL file with all insert statements
+        if file_type == 'SQL':
+            sql_path = os.path.join(output_dir, "data_inserts.sql")
+            with open(sql_path, mode="w", encoding="utf-8") as f:
+                insert_statements = self.export_as_sql_insert_query()
+                f.write(insert_statements)
+
+        # 2) Export each table as CSV and JSON
+        for table_name, records in self.generated_data.items():
+            columns = [col['name'] for col in self.tables[table_name]['columns']]
+
+            # ───────────── Export CSV ─────────────
+
+            if file_type == 'CSV':
+                csv_path = os.path.join(output_dir, f"{table_name}.csv")
+                with open(csv_path, mode="w", newline="", encoding="utf-8") as f:
+                    writer = csv.DictWriter(f, fieldnames=columns)
+                    writer.writeheader()
+                    for row in records:
+                        # Ensure all columns exist in row (some might be missing if they're None)
+                        writer.writerow({col: row.get(col, "") for col in columns})
+
+            # ───────────── Export JSON ─────────────
+            if file_type == 'JSON':
+                json_path = os.path.join(output_dir, f"{table_name}.json")
+                with open(json_path, mode="w", encoding="utf-8") as f:
+                    json.dump(records, f, indent=2, default=str)

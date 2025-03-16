@@ -1,6 +1,6 @@
 pandas <= 2.2.3
 numpy <= 2.2.3
-Faker<=30.3.0
+Faker <=30.3.0
 sqlparse <= 0.5.3
 sqlglot <=26.0.0
 networkx <= 3.4.2

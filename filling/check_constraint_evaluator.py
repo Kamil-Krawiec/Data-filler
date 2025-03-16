@@ -379,22 +379,65 @@ class CheckConstraintEvaluator:
         else:
             raise ValueError(f"Unsupported argument for DATE function: {arg}")
 
+    def _as_date(self, val):
+        """
+        If the literal looks like one of these:
+            - 'YYYY-MM-DD'
+            - 'MM-DD-YYYY'
+            - 'DD-MM-YYYY'
+        (with or without surrounding quotes),
+        return a datetime.date object.
+        Otherwise, return the original string.
+        """
+        if not isinstance(val, str):
+            return val
+        # Strip optional leading/trailing single quotes
+        lit = val.strip("'")
+
+        # Try each of the three date formats in sequence
+        for fmt in ("%Y-%m-%d", "%m-%d-%Y", "%d-%m-%Y"):
+            try:
+                return datetime.strptime(lit, fmt).date()
+            except ValueError:
+                pass  # Not matching this format, keep trying
+
+        # If none of the formats worked, return the original string
+        return literal
+
+    def _as_numeric(self, val):
+        """Attempt to parse or interpret val as a number."""
+        if isinstance(val, (int, float)):
+            return val
+        if isinstance(val, str) and re.match(r'^\d+(\.\d+)?$', val):
+            return float(val) if '.' in val else int(val)
+        return None
+    def unify_operands(self, left, right):
+        """
+        If both are date-like, return them as dates.
+        If both are numeric, return as float/int.
+        Otherwise, return them unchanged.
+        """
+        left_d = self._as_date(left)
+        right_d = self._as_date(right)
+        if left_d is not None and right_d is not None:
+            return left_d, right_d
+
+        left_n = self._as_numeric(left)
+        right_n = self._as_numeric(right)
+        if left_n is not None and right_n is not None:
+            return left_n, right_n
+
+        return left, right
+
     def apply_operator(self, left, operator: str, right):
         """
-        Apply a binary operator to two operands.
-
-        Args:
-            left: The left operand in the operation.
-            operator (str): The operator to apply (e.g., '=', '!=', '>', '<').
-            right: The right operand in the operation.
-
-        Returns:
-            Any: The result of applying the operator to the operands.
-
-        Raises:
-            ValueError: If the operator is unsupported.
+        Apply a binary operator after unifying operands if it's a comparison operator.
         """
         operator = operator.upper()
+
+        if operator in ('=', '==', '<>', '!=', '>', '<', '>=', '<='):
+            left, right = self.unify_operands(left, right)
+
         if operator in ('=', '=='):
             return left == right
         elif operator in ('<>', '!='):
@@ -408,9 +451,9 @@ class CheckConstraintEvaluator:
         elif operator == '<=':
             return left <= right
         elif operator == 'AND':
-            return left and right
+            return bool(left) and bool(right)
         elif operator == 'OR':
-            return left or right
+            return bool(left) or bool(right)
         elif operator == 'LIKE':
             return self.like(left, right)
         elif operator == 'NOT LIKE':

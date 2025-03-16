@@ -164,3 +164,4 @@ cython_debug/
 DB_infos
 
 my_tests
+fake_data
