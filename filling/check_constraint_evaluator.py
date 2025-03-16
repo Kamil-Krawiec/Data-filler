@@ -32,6 +32,8 @@ class CheckConstraintEvaluator:
          """
         self.expression_parser = self._create_expression_parser()
         self.schema_columns = schema_columns or []
+        self.parsed_constraint_cache = {}
+
 
     def _create_expression_parser(self):
         """
@@ -98,6 +100,12 @@ class CheckConstraintEvaluator:
 
         return expr
 
+    def _get_parsed_expression(self, check_expression: str):
+        if check_expression not in self.parsed_constraint_cache:
+            parsed_expr = self.expression_parser.parseString(check_expression, parseAll=True)[0]
+            self.parsed_constraint_cache[check_expression] = parsed_expr
+        return self.parsed_constraint_cache[check_expression]
+
     def extract_conditions(self, check_expression: str) -> dict:
         """
         Extract conditions from a CHECK constraint expression.
@@ -109,7 +117,7 @@ class CheckConstraintEvaluator:
             dict: A dictionary mapping column names to their respective conditions extracted from the constraint.
         """
         try:
-            parsed_expr = self.expression_parser.parseString(check_expression, parseAll=True)[0]
+            parsed_expr = self._get_parsed_expression(check_expression)
             conditions = self._extract_conditions_recursive(parsed_expr)
             return conditions
         except Exception as e:

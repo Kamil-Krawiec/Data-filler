@@ -5,6 +5,7 @@ import re
 import json
 import csv
 import random
+import numpy as np
 from datetime import datetime, date, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from faker import Faker
@@ -154,23 +155,71 @@ class DataGenerator:
             for pk in pk_columns:
                 self.primary_keys[table][pk] = 1  # Start counting from 1
 
+    def _generate_table_initial_data(self, table: str):
+        """
+        Generate initial data for a single table.
+        This helper is used in parallel generation.
+        """
+        self.generated_data[table] = []
+        num_rows = self.num_rows_per_table.get(table, self.num_rows)
+        pk_columns = self.tables[table].get('primary_key', [])
+
+        if len(pk_columns) == 1:
+            # Generate single-column primary keys
+            self.generate_primary_keys(table, num_rows)
+        elif len(pk_columns) > 1:
+            # Generate composite primary keys
+            self.generate_composite_primary_keys(table, num_rows)
+        else:
+            # No primary key => generate empty rows
+            for _ in range(num_rows):
+                self.generated_data[table].append({})
+
     def generate_initial_data(self):
+        """
+        Generate initial data for all tables in parallel groups while preserving order.
+        This method first computes a level (or depth) for each table so that tables
+        with no dependencies (or whose parents are already generated) are processed concurrently.
+        """
+        # Compute levels for each table.
+        levels = {}
         for table in self.table_order:
-            self.generated_data[table] = []
-            num_rows = self.num_rows_per_table.get(table, self.num_rows)
-            pk_columns = self.tables[table].get('primary_key', [])
-
-            if len(pk_columns) == 1:
-                # Use the new approach: generate the PKs all at once
-                self.generate_primary_keys(table, num_rows)
-
-            elif len(pk_columns) > 1:
-                # Composite PK => use generate_composite_primary_keys
-                self.generate_composite_primary_keys(table, num_rows)
+            # Get all foreign keys for the table
+            foreign_keys = self.tables[table].get('foreign_keys', [])
+            if not foreign_keys:
+                levels[table] = 0
             else:
-                # No primary key => generate empty rows
-                for _ in range(num_rows):
-                    self.generated_data[table].append({})
+                # Level is one more than the maximum level of its referenced tables.
+                max_level = 0
+                for fk in foreign_keys:
+                    ref_table = fk.get('ref_table')
+                    if ref_table in levels:
+                        max_level = max(max_level, levels[ref_table] + 1)
+                    else:
+                        # If reference not processed yet, assume level 0 (will be corrected later)
+                        max_level = max(max_level, 0)
+                levels[table] = max_level
+
+        # Group tables by level.
+        level_groups = {}
+        for table, level in levels.items():
+            level_groups.setdefault(level, []).append(table)
+
+        # Process each level sequentially; within a level, process tables concurrently.
+        for level in sorted(level_groups.keys()):
+            tables_at_level = level_groups[level]
+            with ThreadPoolExecutor(max_workers=len(tables_at_level)) as executor:
+                # Submit generation tasks for each table in this level.
+                futures = {executor.submit(self._generate_table_initial_data, table): table
+                           for table in tables_at_level}
+                # Wait for all tables in this level to complete.
+                for future in as_completed(futures):
+                    table = futures[future]
+                    try:
+                        future.result()
+                        logger.info(f"Initial data generated for table '{table}' at level {level}.")
+                    except Exception as e:
+                        logger.error(f"Error generating data for table '{table}': {e}")
 
     def generate_composite_primary_keys(self, table: str, num_rows: int):
         pk_columns = self.tables[table]['primary_key']
@@ -227,13 +276,9 @@ class DataGenerator:
             self.generated_data[table].append(row)
 
     def generate_primary_keys(self, table: str, num_rows: int):
-        """
-        Pre-generate primary keys for single-column PK tables, or auto-increment if numeric.
-        Then assign them to rows in self.generated_data[table].
-        """
         pk_columns = self.tables[table].get('primary_key', [])
         if len(pk_columns) != 1:
-            return  # We'll handle composite PK elsewhere (e.g. generate_composite_primary_keys)
+            return  # Handle composite PK elsewhere.
 
         pk_col = pk_columns[0]
         col_info = self.get_column_info(table, pk_col)
@@ -241,39 +286,25 @@ class DataGenerator:
             return
 
         col_type = col_info['type'].upper()
-        # We'll store our new rows in a temporary list (instead of the row-by-row approach)
-        new_rows = []
 
         if col_info.get("is_serial") or re.search(r'(INT|BIGINT|SMALLINT|DECIMAL|NUMERIC)', col_type):
-            # Numeric or is_serial => auto-increment
             start_val = self.primary_keys[table][pk_col]
-            for i in range(num_rows):
-                row = {pk_col: start_val + i}
-                new_rows.append(row)
-            # Update the counter
+            # Use NumPy to generate a range of auto-increment values.
+            values = np.arange(start_val, start_val + num_rows)
+            new_rows = [{pk_col: int(value)} for value in values]
             self.primary_keys[table][pk_col] = start_val + num_rows
-
         else:
-            # Non-numeric PK => let's generate num_rows distinct values
+            # For non-numeric PKs, fallback to the current approach.
             constraints = col_info.get('constraints', [])
             used_values = set()
             values_list = []
-
-            # Keep generating until we have exactly num_rows unique values
-            # (If your column has extremely narrow constraints, you might not achieve this,
-            #  so you could add logic for fallback or error out.)
             while len(values_list) < num_rows:
                 tmp_val = self.generate_column_value(table, col_info, {}, constraints)
                 if tmp_val not in used_values:
                     used_values.add(tmp_val)
                     values_list.append(tmp_val)
+            new_rows = [{pk_col: val} for val in values_list]
 
-            # Now assign them row by row
-            for val in values_list:
-                row = {pk_col: val}
-                new_rows.append(row)
-
-        # Finally, store the new rows
         self.generated_data[table] = new_rows
 
     def process_row(self, table: str, row: dict) -> dict:
@@ -522,41 +553,28 @@ class DataGenerator:
         return self.generate_value_based_on_type(col_type)
 
     def generate_value_based_on_type(self, col_type: str):
-        """
-        Generate a synthetic value based on the SQL data type of a column.
-
-        Args:
-            col_type (str): The SQL data type of the column.
-
-        Returns:
-            Any: A synthetic value appropriate for the specified data type.
-        """
         is_unsigned = False
         if col_type.upper().startswith('U'):
             is_unsigned = True
-            col_type = col_type[1:]  # Remove the leading 'U' so the rest of the logic matches e.g. 'INT', 'BIGINT'
-
+            col_type = col_type[1:]
         col_type = col_type.upper()
 
         if re.match(r'.*\b(INT|INTEGER|SMALLINT|BIGINT)\b.*', col_type):
             min_val = 0 if is_unsigned else -10000
-            return random.randint(min_val, 10000)
+            # Using numpy randint to generate a single value
+            return int(np.random.randint(min_val, 10001))
         elif re.match(r'.*\b(DECIMAL|NUMERIC)\b.*', col_type):
-            # Similar logic for DECIMAL if needed
             precision, scale = 10, 2
             match = re.search(r'\((\d+),\s*(\d+)\)', col_type)
             if match:
                 precision, scale = int(match.group(1)), int(match.group(2))
             max_value = 10 ** (precision - scale) - 1
-
-            # If it's unsigned, ensure the minimum is 0
-            min_dec = 0.0 if is_unsigned else -9999.0  # or 0 if you prefer all positives
-            return round(random.uniform(min_dec, max_value), scale)
-
+            min_dec = 0.0 if is_unsigned else -9999.0
+            # Using numpy uniform to generate a float value
+            return round(float(np.random.uniform(min_dec, max_value)), scale)
         elif re.match(r'.*\b(FLOAT|REAL|DOUBLE PRECISION|DOUBLE)\b.*', col_type):
-            return random.uniform(0, 10000)
-        elif re.match(r'.*\b(BOOLEAN|BOOL)\b.*', col_type):
-            return random.choice([True, False])
+            return float(np.random.uniform(0, 10000))
+        # For non-numeric types, fallback to the existing logic.
         elif re.match(r'.*\b(DATE)\b.*', col_type):
             return self.fake.date_object()
         elif re.match(r'.*\b(TIMESTAMP|DATETIME)\b.*', col_type):
@@ -567,16 +585,12 @@ class DataGenerator:
             length_match = re.search(r'\((\d+)\)', col_type)
             length = int(length_match.group(1)) if length_match else 255
             if length >= 5:
-                # Use fake.text for lengths >= 5
                 return self.fake.text(max_nb_chars=length)[:length]
             elif length > 0:
-                # Use fake.lexify for lengths < 5
                 return self.fake.lexify(text='?' * length)
             else:
-                # Length is zero or negative; return an empty string
                 return ''
         else:
-            # Default to a random word for unknown types
             return self.fake.word()
 
     def is_foreign_key_column(self, table_p: str, col_name: str) -> bool:
@@ -940,27 +954,23 @@ class DataGenerator:
 
     def export_data_files(self, output_dir: str, file_type='SQL') -> None:
         """
-        Export generated data as CSV and JSON for each table,
-        plus a single .sql file containing all insert statements.
-
-        Args:
-            output_dir (str): Directory to place the exported files.
-            file_type (str, optional): The type of export to perform ('SQL', 'CSV', 'JSON'). Defaults to 'SQL'.
+        Export generated data as CSV and JSON for each table concurrently,
+        plus a single .sql file containing all insert statements (processed sequentially).
         """
         file_type = file_type.upper()
         os.makedirs(output_dir, exist_ok=True)
-        # 1) By default export a single SQL file with all insert statements
+
+        # For SQL export, we still export to a single file sequentially.
         if file_type == 'SQL':
             sql_path = os.path.join(output_dir, "data_inserts.sql")
             with open(sql_path, mode="w", encoding="utf-8") as f:
                 insert_statements = self.export_as_sql_insert_query()
                 f.write(insert_statements)
 
-        # 2) Export each table as CSV and JSON
-        for table_name, records in self.generated_data.items():
+        # For CSV and JSON, export each table concurrently.
+        def export_table(table_name: str):
             columns = [col['name'] for col in self.tables[table_name]['columns']]
-
-            # ───────────── Export CSV ─────────────
+            records = self.generated_data.get(table_name, [])
 
             if file_type == 'CSV':
                 csv_path = os.path.join(output_dir, f"{table_name}.csv")
@@ -968,11 +978,22 @@ class DataGenerator:
                     writer = csv.DictWriter(f, fieldnames=columns)
                     writer.writeheader()
                     for row in records:
-                        # Ensure all columns exist in row (some might be missing if they're None)
                         writer.writerow({col: row.get(col, "") for col in columns})
+                logger.info(f"Exported CSV for table '{table_name}'.")
 
-            # ───────────── Export JSON ─────────────
             if file_type == 'JSON':
                 json_path = os.path.join(output_dir, f"{table_name}.json")
                 with open(json_path, mode="w", encoding="utf-8") as f:
                     json.dump(records, f, indent=2, default=str)
+                logger.info(f"Exported JSON for table '{table_name}'.")
+
+        # Use ThreadPoolExecutor to export tables in parallel.
+        if file_type in ('CSV', 'JSON'):
+            with ThreadPoolExecutor(max_workers=len(self.generated_data)) as executor:
+                futures = {executor.submit(export_table, table): table for table in self.generated_data}
+                for future in as_completed(futures):
+                    table = futures[future]
+                    try:
+                        future.result()
+                    except Exception as e:
+                        logger.error(f"Error exporting data for table '{table}': {e}")

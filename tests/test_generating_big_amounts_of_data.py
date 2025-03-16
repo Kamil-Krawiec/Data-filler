@@ -3,14 +3,15 @@ import re
 import time
 import pytest
 from datetime import date
+import logging
 
 from parsing import parse_create_tables
 from filling import DataGenerator
-import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
-
-# Define a big schema as a SQL script.
 @pytest.fixture
 def big_schema_sql():
     sql = """
@@ -41,16 +42,15 @@ def big_schema_sql():
     return sql
 
 
-# Parse the schema.
 @pytest.fixture
 def big_schema_tables(big_schema_sql):
     # Use 'postgres' dialect to support SERIAL types
     return parse_create_tables(big_schema_sql, dialect='postgres')
 
 
-# Create a DataGenerator configured to produce large amounts of data.
+# Instead of one fixture, we build the generator parameters as a fixture.
 @pytest.fixture
-def big_data_generator(big_schema_tables):
+def generator_params(big_schema_tables):
     num_rows_per_table = {
         "Authors": 10000,
         "Books": 20000,
@@ -72,49 +72,44 @@ def big_data_generator(big_schema_tables):
             "review_text": lambda fake, row: fake.text(max_nb_chars=200)
         }
     }
-    return DataGenerator(
-        tables=big_schema_tables,
-        num_rows=10000,
-        predefined_values=predefined_values,
-        column_type_mappings=column_type_mappings,
-        num_rows_per_table=num_rows_per_table
-    )
+    params = {
+        "tables": big_schema_tables,
+        "num_rows": 10000,
+        "predefined_values": predefined_values,
+        "column_type_mappings": column_type_mappings,
+        "num_rows_per_table": num_rows_per_table
+    }
+    return params
 
 
+def test_big_data_generation_with_and_without_repair(generator_params):
+    # Create two separate DataGenerator instances using the same parameters.
+    data_generator_with = DataGenerator(**generator_params)
+    data_generator_without = DataGenerator(**generator_params)
 
-def test_big_data_generation_with_and_without_repair(big_data_generator):
-    """
-    Generate a large amount of data twice:
-      - First, with repair enabled: measure the time and assert that all rows satisfy constraints.
-      - Second, without repair: measure the time and count the number of rows that violate constraints.
-    """
-    logger = logging.getLogger(__name__)
-    logger.setLevel(logging.INFO)
-
-
-    # Generate data with repair enabled
+    # Generate data with repair enabled.
     start_repair = time.time()
-    data_with_repair = big_data_generator.generate_data(run_repair=True, print_stats=False)
+    data_with_repair = data_generator_with.generate_data(run_repair=True, print_stats=False)
     elapsed_repair = time.time() - start_repair
     logger.info("Data generation WITH repair took %.2f seconds", elapsed_repair)
 
-    # Check that all rows in the repaired data satisfy constraints.
+    # Verify that every row in the repaired data satisfies constraints.
     for table, rows in data_with_repair.items():
         for row in rows:
-            valid, message = big_data_generator.is_row_valid(table, row)
+            valid, message = data_generator_with.is_row_valid(table, row)
             assert valid, f"Repaired row in table '{table}' violates constraint: {message}"
 
     # Generate data without repair enabled.
     start_no_repair = time.time()
-    data_without_repair = big_data_generator.generate_data(run_repair=False, print_stats=False)
+    data_without_repair = data_generator_without.generate_data(run_repair=False, print_stats=False)
     elapsed_no_repair = time.time() - start_no_repair
     logger.info("Data generation WITHOUT repair took %.2f seconds", elapsed_no_repair)
 
-    # Count and log the number of violations in the unrepaired data.
+    # Count constraint violations in the unrepaired data.
     violation_count = 0
     for table, rows in data_without_repair.items():
         for row in rows:
-            valid, message = big_data_generator.is_row_valid(table, row)
+            valid, message = data_generator_without.is_row_valid(table, row)
             if not valid:
                 violation_count += 1
                 logger.info("Unrepaired row in table '%s' violates constraint: %s", table, message)
