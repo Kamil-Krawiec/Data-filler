@@ -7,7 +7,7 @@ from filling import DataGenerator
 
 @pytest.fixture
 def theater_sql_script_path():
-    return os.path.join("tests", "DB_infos/theater_sql_script.sql")
+    return os.path.join("tests/tests_base", "DB_infos/theater_sql_script.sql")
 
 
 @pytest.fixture

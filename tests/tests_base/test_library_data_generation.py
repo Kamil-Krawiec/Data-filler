@@ -9,7 +9,7 @@ from filling import DataGenerator
 
 @pytest.fixture
 def library_sql_script_path():
-    return os.path.join("tests", "DB_infos/library_sql_script.sql")
+    return os.path.join("tests/tests_base", "DB_infos/library_sql_script.sql")
 
 
 @pytest.fixture

@@ -13,7 +13,7 @@ def ecommerce_sql_script_path():
     """
     Provide the path to the E-commerce schema .sql file.
     """
-    return os.path.join("tests", "DB_infos/ecommerce_sql_script.sql")
+    return os.path.join("tests/tests_base", "DB_infos/ecommerce_sql_script.sql")
 
 
 @pytest.fixture
