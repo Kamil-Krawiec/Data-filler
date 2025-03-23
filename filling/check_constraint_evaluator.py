@@ -141,22 +141,12 @@ class CheckConstraintEvaluator:
 
     def _evaluate_literal(self, value, treat_as_identifier: bool = False):
         """
-        Evaluate a literal value from parsed expression.
+        Evaluate a literal value from an expression.
+        This simplified version handles ParseResults, strings, and numbers.
         """
-        if isinstance(value, ParseResults):
-            if 'func_name' in value:
-                func_name = str(value['func_name']).upper()
-                if func_name == 'EXTRACT':
-                    field = value['field']
-                    source = self._evaluate_literal(value['source'])
-                    return self.extract(field, source)
-                elif func_name == 'DATE':
-                    arg = self._evaluate_literal(value['args'])
-                    return self.date_func(arg)
-                else:
-                    raise ValueError(f"Unsupported function '{func_name}' in CHECK constraint")
-            return self._evaluate_literal(value[0], treat_as_identifier)
-        elif isinstance(value, str):
+        if isinstance(value, (ParseResults, list)):
+            return self._evaluate_expression(value, {})
+        if isinstance(value, str):
             token = value.upper()
             if treat_as_identifier and (value in self.schema_columns or token in self.schema_columns):
                 return value
@@ -237,89 +227,86 @@ class CheckConstraintEvaluator:
             flat_list.extend(self._flatten(item))
         return flat_list
 
-    def _evaluate_expression(self, parsed_expr, row):
+    def _evaluate_expression(self, expr, row):
         """
-        Recursively evaluate parsed_expr against row.
-        First, flatten the expression. If a BETWEEN pattern [left, 'BETWEEN', lower, 'AND', upper]
-        is found in the flat list, evaluate that pattern. Otherwise, evaluate as a binary/unary expression.
+        Recursively evaluate an expression (which can be a ParseResults, list, or literal)
+        against the provided row. This unified method replaces separate functions and
+        minimizes repetition.
         """
-        tokens = self._flatten(parsed_expr)
-        upper_tokens = [str(tok).upper() for tok in tokens]
-
-        if "BETWEEN" in upper_tokens and "AND" in upper_tokens:
-            try:
-                between_idx = upper_tokens.index("BETWEEN")
-                and_idx = upper_tokens.index("AND", between_idx + 1)
-                if between_idx == 0:
-                    raise ValueError("Missing expression before BETWEEN")
-                value_expr = tokens[between_idx - 1]
-                lower_expr = tokens[between_idx + 1]
-                if and_idx + 1 >= len(tokens):
-                    raise ValueError("Missing expression after AND in BETWEEN clause")
-                upper_expr = tokens[and_idx + 1]
-                val = self._evaluate_single_token(value_expr, row)
-                low = self._evaluate_single_token(lower_expr, row)
-                high = self._evaluate_single_token(upper_expr, row)
-                return (low <= val <= high)
-            except Exception as e:
-                # Fall back if BETWEEN pattern not correctly parsed.
-                pass
-
-        if isinstance(parsed_expr, ParseResults):
-            if 'func_name' in parsed_expr:
-                func_name = str(parsed_expr['func_name']).upper()
+        # If the expression is a list or ParseResults, process its elements.
+        if isinstance(expr, (list, ParseResults)):
+            # If a function call is detected (has 'func_name'), process it.
+            if isinstance(expr, ParseResults) and 'func_name' in expr:
+                func_name = str(expr['func_name']).upper()
                 if func_name == 'EXTRACT':
-                    field = parsed_expr['field']
-                    source = self._evaluate_expression(parsed_expr['source'], row)
+                    field = self._evaluate_expression(expr['field'], row)
+                    source = self._evaluate_expression(expr['source'], row)
                     return self.extract(field, source)
                 elif func_name == 'DATE':
-                    arg = self._evaluate_expression(parsed_expr['args'], row)
+                    arg = self._evaluate_expression(expr['args'], row)
                     return self.date_func(arg)
                 else:
-                    args = [self._evaluate_expression(a, row) for a in parsed_expr.get('args', [])]
+                    args = [self._evaluate_expression(arg, row) for arg in expr.get('args', [])]
                     func = getattr(self, func_name.lower(), None)
                     if func:
                         return func(*args)
-                    raise ValueError(f"Unsupported function '{func_name}' in CHECK constraint")
-            if len(parsed_expr) == 3:
-                left_val = self._evaluate_expression(parsed_expr[0], row)
-                operator = str(parsed_expr[1]).upper()
-                right_val = self._evaluate_expression(parsed_expr[2], row)
+                    else:
+                        raise ValueError(f"Unsupported function '{func_name}' in CHECK constraint")
+            # If the expression contains only one element, evaluate that element.
+            if len(expr) == 1:
+                return self._evaluate_expression(expr[0], row)
+            # Flatten the expression for easier handling.
+            flat = self._flatten(expr)
+            # Handle BETWEEN specially if detected.
+            if "BETWEEN" in [str(tok).upper() for tok in flat]:
+                try:
+                    tokens_upper = [str(tok).upper() for tok in flat]
+                    between_idx = tokens_upper.index("BETWEEN")
+                    and_idx = tokens_upper.index("AND", between_idx + 1)
+                    value_expr = flat[between_idx - 1]
+                    lower_expr = flat[between_idx + 1]
+                    upper_expr = flat[and_idx + 1]
+                    val = self._evaluate_expression(value_expr, row)
+                    low = self._evaluate_expression(lower_expr, row)
+                    high = self._evaluate_expression(upper_expr, row)
+                    return low <= val <= high
+                except Exception:
+                    pass
+            # For binary/unary operators: if length is 3, treat as binary.
+            if len(expr) == 3:
+                left_val = self._evaluate_expression(expr[0], row)
+                operator = str(expr[1]).upper()
+                right_val = self._evaluate_expression(expr[2], row)
                 return self.apply_operator(left_val, operator, right_val)
-            if len(parsed_expr) == 2:
-                op = str(parsed_expr[0]).upper()
-                operand = self._evaluate_expression(parsed_expr[1], row)
-                if op == 'NOT':
+            # If length is 2, treat as a unary operator (e.g. NOT).
+            if len(expr) == 2:
+                operator = str(expr[0]).upper()
+                operand = self._evaluate_expression(expr[1], row)
+                if operator == 'NOT':
                     return not operand
-                raise ValueError(f"Unsupported unary operator '{op}'")
-            if len(parsed_expr) == 1:
-                return self._evaluate_expression(parsed_expr[0], row)
+                else:
+                    raise ValueError(f"Unsupported unary operator '{operator}'")
+            # Otherwise, evaluate each element in sequence and return the last.
             result = None
-            for item in parsed_expr:
+            for item in expr:
                 result = self._evaluate_expression(item, row)
             return result
-
-        if isinstance(parsed_expr, list):
-            result = None
-            for item in parsed_expr:
-                result = self._evaluate_expression(item, row)
-            return result
-
-        if isinstance(parsed_expr, str):
-            token = parsed_expr.upper()
+        # If the expression is a string, resolve it.
+        if isinstance(expr, str):
+            token = expr.upper()
             if token == 'CURRENT_DATE':
                 return date.today()
             if token in ('TRUE', 'FALSE'):
                 return token == 'TRUE'
-            if parsed_expr in row:
-                return row[parsed_expr]
-            if parsed_expr.startswith("'") and parsed_expr.endswith("'"):
-                return parsed_expr.strip("'")
-            if re.match(r'^\d+(\.\d+)?$', parsed_expr):
-                return float(parsed_expr) if '.' in parsed_expr else int(parsed_expr)
-            return parsed_expr
-
-        return parsed_expr
+            if expr in row:
+                return row[expr]
+            if expr.startswith("'") and expr.endswith("'"):
+                return expr.strip("'")
+            if re.match(r'^\d+(\.\d+)?$', expr):
+                return float(expr) if '.' in expr else int(expr)
+            return expr
+        # Otherwise, return the expression as is.
+        return expr
 
     def _evaluate_single_token(self, token, row):
         """
@@ -356,48 +343,44 @@ class CheckConstraintEvaluator:
 
     def apply_operator(self, left, operator: str, right):
         """
-        Apply a binary operator. For comparison operators, unify operands.
+        Apply a binary operator to the left and right operands.
+        This simplified version uses a mapping to reduce repetitive code.
         """
-        operator = operator.upper()
-        if operator in ('=', '==', '<>', '!=', '>', '<', '>=', '<='):
+        op = operator.upper()
+        # For comparison operators, unify operands.
+        if op in ('=', '==', '<>', '!=', '>', '<', '>=', '<='):
             left, right = self.unify_operands(left, right)
-        if operator in ('=', '=='):
-            return left == right
-        elif operator in ('<>', '!='):
-            return left != right
-        elif operator == '>':
-            return left > right
-        elif operator == '<':
-            return left < right
-        elif operator == '>=':
-            return left >= right
-        elif operator == '<=':
-            return left <= right
-        elif operator == 'AND':
-            return bool(left) and bool(right)
-        elif operator == 'OR':
-            return bool(left) or bool(right)
-        elif operator == 'LIKE':
+        op_map = {
+            '=': lambda l, r: l == r,
+            '==': lambda l, r: l == r,
+            '<>': lambda l, r: l != r,
+            '!=': lambda l, r: l != r,
+            '>': lambda l, r: l > r,
+            '<': lambda l, r: l < r,
+            '>=': lambda l, r: l >= r,
+            '<=': lambda l, r: l <= r,
+            'AND': lambda l, r: bool(l) and bool(r),
+            'OR': lambda l, r: bool(l) or bool(r),
+            '+': lambda l, r: l + r,
+            '-': lambda l, r: l - r,
+            '*': lambda l, r: l * r,
+            '/': lambda l, r: l / r,
+        }
+        if op in op_map:
+            return op_map[op](left, right)
+        elif op == 'LIKE':
             return self.like(left, right)
-        elif operator == 'NOT LIKE':
+        elif op == 'NOT LIKE':
             return self.not_like(left, right)
-        elif operator == 'IN':
+        elif op == 'IN':
             return left in right
-        elif operator == 'NOT IN':
+        elif op == 'NOT IN':
             return left not in right
-        elif operator == 'IS':
+        elif op == 'IS':
             return left is right
-        elif operator == 'IS NOT':
+        elif op == 'IS NOT':
             return left is not right
-        elif operator == '+':
-            return left + right
-        elif operator == '-':
-            return left - right
-        elif operator == '*':
-            return left * right
-        elif operator == '/':
-            return left / right
-        elif operator == 'BETWEEN':
+        elif op == 'BETWEEN':
             if not (isinstance(right, list) and len(right) == 2):
                 raise ValueError("BETWEEN operator expects right side as [lower, upper]")
             lower, upper = right
@@ -407,7 +390,6 @@ class CheckConstraintEvaluator:
             return lower <= left <= upper
         else:
             raise ValueError(f"Unsupported operator '{operator}'")
-
     def date_func(self, arg) -> date:
         """
         Simulate the SQL DATE function.
