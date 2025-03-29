@@ -227,15 +227,60 @@ class CheckConstraintEvaluator:
             flat_list.extend(self._flatten(item))
         return flat_list
 
+    def _handle_between(self, tokens_str: str, row: dict):
+        """
+        Look for a BETWEEN clause in the token string and, if found,
+        re-parse the value, lower, and upper parts to evaluate them.
+        Returns True if the BETWEEN condition holds, False if not,
+        or None if no BETWEEN clause was detected.
+        """
+        # This regex captures three groups:
+        #   group1: everything before the first BETWEEN keyword,
+        #   group2: the expression after BETWEEN and before AND,
+        #   group3: everything after the first AND.
+        pattern = re.compile(r'(.+?)\s+BETWEEN\s+(.+?)\s+AND\s+(.+)', re.IGNORECASE)
+        match = pattern.search(tokens_str)
+        if match:
+            value_str = match.group(1).strip()
+            lower_str = match.group(2).strip()
+            upper_str = match.group(3).strip()
+            val = self._evaluate_expression(value_str, row)
+            low = self._evaluate_expression(lower_str, row)
+            high = self._evaluate_expression(upper_str, row)
+            if 'date' in tokens_str.lower():
+                try:
+                    val = self.date_func(val)
+                    low = self.date_func(low)
+                    high = self.date_func(high)
+                except ValueError:
+                    return low <= val <= high
+            return low <= val <= high
+        return None
+
     def _evaluate_expression(self, expr, row):
         """
         Recursively evaluate an expression (which can be a ParseResults, list, or literal)
-        against the provided row. This unified method replaces separate functions and
-        minimizes repetition.
+        against the provided row.
         """
-        # If the expression is a list or ParseResults, process its elements.
+        # First, if expr is a string, check for plain-text function calls.
+        if isinstance(expr, str):
+            stripped = expr.strip()
+            tokens = stripped.split()
+            if tokens:
+                func = tokens[0].upper()
+                if func == "EXTRACT":
+                    # Expected plain syntax: EXTRACT <field> <source>
+                    if len(tokens) >= 3:
+                        field = tokens[1]
+                        source_str = " ".join(tokens[2:])
+                        return self.extract(field, self._evaluate_expression(source_str, row))
+                elif func == "DATE":
+                    # Expected plain syntax: DATE <arg>
+                    if len(tokens) >= 2:
+                        arg_str = " ".join(tokens[1:])
+                        return self.date_func(self._evaluate_expression(arg_str, row))
         if isinstance(expr, (list, ParseResults)):
-            # If a function call is detected (has 'func_name'), process it.
+            # Handle function calls.
             if isinstance(expr, ParseResults) and 'func_name' in expr:
                 func_name = str(expr['func_name']).upper()
                 if func_name == 'EXTRACT':
@@ -245,34 +290,86 @@ class CheckConstraintEvaluator:
                 elif func_name == 'DATE':
                     arg = self._evaluate_expression(expr['args'], row)
                     return self.date_func(arg)
+                elif func_name == 'UPPER':
+                    arg = self._evaluate_expression(expr['args'], row)
+                    return str(arg).upper()
+                elif func_name == 'LOWER':
+                    arg = self._evaluate_expression(expr['args'], row)
+                    return str(arg).lower()
+                elif func_name == 'LENGTH':
+                    arg = self._evaluate_expression(expr['args'], row)
+                    return len(arg) if arg is not None else 0
+                elif func_name in ('SUBSTRING', 'SUBSTR'):
+                    args = [self._evaluate_expression(a, row) for a in expr.get('args', [])]
+                    if len(args) == 2:
+                        s, start = args
+                        # SQL is 1-indexed; adjust to 0-indexed.
+                        return s[max(0, start - 1):]
+                    elif len(args) >= 3:
+                        s, start, length = args[0], args[1], args[2]
+                        return s[max(0, start - 1):max(0, start - 1) + length]
+                    else:
+                        raise ValueError(f"{func_name} requires at least 2 arguments")
+                elif func_name == 'ROUND':
+                    args = [self._evaluate_expression(a, row) for a in expr.get('args', [])]
+                    if len(args) == 1:
+                        return round(args[0])
+                    elif len(args) >= 2:
+                        return round(args[0], int(args[1]))
+                    else:
+                        raise ValueError("ROUND requires at least one argument")
+                elif func_name == 'ABS':
+                    arg = self._evaluate_expression(expr['args'], row)
+                    return abs(arg)
+                elif func_name == 'COALESCE':
+                    args = [self._evaluate_expression(a, row) for a in expr.get('args', [])]
+                    for a in args:
+                        if a is not None:
+                            return a
+                    return None
+                elif func_name == 'POWER':
+                    args = [self._evaluate_expression(a, row) for a in expr.get('args', [])]
+                    if len(args) >= 2:
+                        return args[0] ** args[1]
+                    else:
+                        raise ValueError("POWER requires two arguments")
+                elif func_name == 'MOD':
+                    args = [self._evaluate_expression(a, row) for a in expr.get('args', [])]
+                    if len(args) >= 2:
+                        return args[0] % args[1]
+                    else:
+                        raise ValueError("MOD requires two arguments")
+                elif func_name == 'TRIM':
+                    arg = self._evaluate_expression(expr['args'], row)
+                    return arg.strip() if isinstance(arg, str) else arg
+                elif func_name in ('INITCAP', 'PROPER'):
+                    arg = self._evaluate_expression(expr['args'], row)
+                    return arg.title() if isinstance(arg, str) else str(arg).title()
+                elif func_name == 'CONCAT':
+                    args = [self._evaluate_expression(a, row) for a in expr.get('args', [])]
+                    return "".join(str(a) for a in args)
+                elif func_name == 'REGEXP_LIKE':
+                    args = [self._evaluate_expression(a, row) for a in expr.get('args', [])]
+                    return self.regexp_like(*args)
                 else:
+                    # Fallback: try to use a method with the lowercase func_name.
                     args = [self._evaluate_expression(arg, row) for arg in expr.get('args', [])]
                     func = getattr(self, func_name.lower(), None)
                     if func:
                         return func(*args)
                     else:
                         raise ValueError(f"Unsupported function '{func_name}' in CHECK constraint")
-            # If the expression contains only one element, evaluate that element.
+            # If only one element, evaluate that element.
             if len(expr) == 1:
                 return self._evaluate_expression(expr[0], row)
             # Flatten the expression for easier handling.
             flat = self._flatten(expr)
-            # Handle BETWEEN specially if detected.
-            if "BETWEEN" in [str(tok).upper() for tok in flat]:
-                try:
-                    tokens_upper = [str(tok).upper() for tok in flat]
-                    between_idx = tokens_upper.index("BETWEEN")
-                    and_idx = tokens_upper.index("AND", between_idx + 1)
-                    value_expr = flat[between_idx - 1]
-                    lower_expr = flat[between_idx + 1]
-                    upper_expr = flat[and_idx + 1]
-                    val = self._evaluate_expression(value_expr, row)
-                    low = self._evaluate_expression(lower_expr, row)
-                    high = self._evaluate_expression(upper_expr, row)
-                    return low <= val <= high
-                except Exception:
-                    pass
-            # For binary/unary operators: if length is 3, treat as binary.
+            tokens_str = " ".join(str(tok) for tok in flat)
+            # Try to detect a BETWEEN clause generically.
+            between_result = self._handle_between(tokens_str, row)
+            if between_result is not None:
+                return between_result
+            # If length is 3, treat as a binary operator.
             if len(expr) == 3:
                 left_val = self._evaluate_expression(expr[0], row)
                 operator = str(expr[1]).upper()
@@ -390,7 +487,8 @@ class CheckConstraintEvaluator:
             return lower <= left <= upper
         else:
             raise ValueError(f"Unsupported operator '{operator}'")
-    def date_func(self, arg) -> date:
+
+    def date_func(self, arg):
         """
         Simulate the SQL DATE function.
         """

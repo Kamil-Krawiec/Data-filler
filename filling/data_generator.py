@@ -635,115 +635,143 @@ class DataGenerator:
 
     def enforce_check_constraints(self, table: str, row: dict):
         """
-        Enforce CHECK constraints on a table row to validate data against custom conditions.
-
-        Args:
-            table (str): The name of the table where the row resides.
-            row (dict): The dictionary representing the row data to be validated.
+        Enforce CHECK constraints on a table row by repeatedly proposing candidate values
+        until the CHECK constraints evaluate to True. For each failed constraint, the evaluator
+        provides updated candidate values based on its internal rules.
         """
         check_constraints = self.tables[table].get('check_constraints', [])
         for check in check_constraints:
-            conditions = self.check_evaluator.extract_conditions(check)
+            # Loop until the row satisfies the constraint.
             while not self.check_evaluator.evaluate(check, row):
+                conditions = self.check_evaluator.extract_conditions(check)
                 for col_name, conds in conditions.items():
                     column = self.get_column_info(table, col_name)
                     if column:
+                        # Propose a new candidate value based on all conditions for that column.
                         row[col_name] = self.generate_value_based_on_conditions(row, column, conds)
 
-    def generate_value_based_on_conditions(
-            self,
-            row: dict,
-            column: dict,
-            conditions: list
-    ):
+    def generate_value_based_on_conditions(self, row: dict, column: dict, conditions: list):
         """
-        Generate a column value that satisfies specific conditional constraints.
+        Generate a candidate value for a column that (hopefully) satisfies a set of CHECK conditions.
+        Supports numeric ranges (including BETWEEN‑like constraints), date ranges, LIKE patterns for strings,
+        booleans, and can incorporate conditions that refer to other columns.
 
         Args:
-            row (dict): The current state of the row being populated.
-            column (dict): The schema information of the column for which to generate data.
-            conditions (list): A list of conditions extracted from CHECK constraints.
+            row (dict): The current row state.
+            column (dict): The schema information for the column.
+            conditions (list): A list of condition dictionaries with keys 'operator' and 'value'.
 
         Returns:
-            Any: A generated value that meets all specified conditions.
+            A candidate value of the appropriate type.
         """
         col_type = column['type'].upper()
-        min_value = None
-        max_value = None
-        other_column_conditions = []
 
-        for condition in conditions:
-            operator = condition['operator']
-            value = condition['value']
-            if isinstance(value, (int, float, date)):
-                if operator in ('>=', '>'):
-                    min_candidate = value + (1 if operator == '>' else 0)
-                    min_value = max(min_value, min_candidate) if min_value is not None else min_candidate
-                elif operator in ('<=', '<'):
-                    max_candidate = value - (1 if operator == '<' else 0)
-                    max_value = min(max_value, max_candidate) if max_value is not None else max_candidate
-            elif isinstance(value, str) and value in self.get_all_column_names():
-                # It's another column
-                other_column_conditions.append((operator, value))
+        # If an equality condition is present, return that value.
+        for cond in conditions:
+            if cond['operator'] in ('=', '=='):
+                return cond['value']
+
+        # ----- Numeric Types -----
+        if re.search(r'\b(INT|INTEGER|SMALLINT|BIGINT|DECIMAL|NUMERIC|FLOAT|REAL)\b', col_type):
+            # Set default range based on type.
+            if any(x in col_type for x in ['INT', 'INTEGER', 'SMALLINT', 'BIGINT']):
+                lower_bound, upper_bound, epsilon = 1, 10000, 1
             else:
-                # Handle other types if necessary
-                pass
+                lower_bound, upper_bound, epsilon = 1.0, 10000.0, 0.001
+            # Process each condition.
+            for cond in conditions:
+                op = cond['operator']
+                val = cond['value']
+                # If the condition refers to another column, use the current row value.
+                if isinstance(val, str) and val in self.get_all_column_names():
+                    if val in row:
+                        val = row[val]
+                    else:
+                        continue
+                if op == '>':
+                    lower_bound = max(lower_bound, val + epsilon)
+                elif op == '>=':
+                    lower_bound = max(lower_bound, val)
+                elif op == '<':
+                    upper_bound = min(upper_bound, val - epsilon)
+                elif op == '<=':
+                    upper_bound = min(upper_bound, val)
+            # If bounds are inconsistent, use the lower_bound.
+            if lower_bound > upper_bound:
+                candidate = lower_bound
+            else:
+                candidate = (random.randint(int(lower_bound), int(upper_bound))
+                             if any(x in col_type for x in ['INT', 'INTEGER', 'SMALLINT', 'BIGINT'])
+                             else random.uniform(lower_bound, upper_bound))
+            return candidate
 
-        # Generate initial value based on min and max
-        if 'INT' in col_type:
-            min_value = min_value if min_value is not None else 1
-            max_value = max_value if max_value is not None else 10000
-            generated_value = random.randint(int(min_value), int(max_value))
-        elif 'DECIMAL' in col_type or 'NUMERIC' in col_type:
-            min_value = min_value if min_value is not None else 1
-            max_value = max_value if max_value is not None else 10000
-            generated_value = random.uniform(int(min_value), int(max_value))
-        elif 'DATE' in col_type:
-            min_date = min_value if isinstance(min_value, date) else date(1900, 1, 1)
-            max_date = max_value if isinstance(max_value, date) else date.today()
-            delta = (max_date - min_date).days
-            random_days = random.randint(0, delta)
-            generated_value = min_date + timedelta(days=random_days)
+        # ----- Date Types -----
+        elif re.search(r'\b(DATE)\b', col_type):
+            default_lower, default_upper = date(1900, 1, 1), date.today()
+            lower_bound, upper_bound = default_lower, default_upper
+            for cond in conditions:
+                op = cond['operator']
+                val = cond['value']
+                if isinstance(val, str) and val in self.get_all_column_names():
+                    if val in row:
+                        val = row[val]
+                    else:
+                        continue
+                if not isinstance(val, date):
+                    try:
+                        val = datetime.strptime(val, '%Y-%m-%d').date()
+                    except Exception:
+                        continue
+                if op == '>':
+                    lower_bound = max(lower_bound, val + timedelta(days=1))
+                elif op == '>=':
+                    lower_bound = max(lower_bound, val)
+                elif op == '<':
+                    upper_bound = min(upper_bound, val - timedelta(days=1))
+                elif op == '<=':
+                    upper_bound = min(upper_bound, val)
+            if lower_bound > upper_bound:
+                candidate = lower_bound
+            else:
+                delta = (upper_bound - lower_bound).days
+                candidate = lower_bound + timedelta(days=random.randint(0, delta))
+            return candidate
+
+        # ----- String Types -----
+        elif re.search(r'\b(CHAR|NCHAR|VARCHAR|NVARCHAR|TEXT)\b', col_type):
+            # Look for a LIKE condition first.
+            for cond in conditions:
+                op = cond['operator'].upper()
+                val = cond['value']
+                if op == 'LIKE':
+                    pattern = val.strip("'")
+                    # Simple heuristics for common patterns:
+                    if pattern.endswith('%'):
+                        fixed = pattern[:-1]
+                        candidate = fixed + ''.join(random.choices("abcdefghijklmnopqrstuvwxyz", k=5))
+                        return candidate
+                    elif pattern.startswith('%'):
+                        fixed = pattern[1:]
+                        candidate = ''.join(random.choices("abcdefghijklmnopqrstuvwxyz", k=5)) + fixed
+                        return candidate
+                    else:
+                        # If no wildcard or ambiguous, return the fixed pattern.
+                        return pattern
+            # Fallback: generate a random string of a default or specified length.
+            length = 20
+            match = re.search(r'\((\d+)\)', col_type)
+            if match:
+                length = int(match.group(1))
+            candidate = self.fake.lexify(text='?' * length)[:length]
+            return candidate
+
+        # ----- Boolean Types -----
+        elif 'BOOL' in col_type:
+            return random.choice([True, False])
+
+        # ----- Fallback -----
         else:
-            # Default generation for other types
-            generated_value = self.generate_value_based_on_type(col_type)
-
-        # Adjust the generated value to satisfy conditions involving other columns
-        for operator, other_col in other_column_conditions:
-            other_value = row.get(other_col)
-            if other_value is None:
-                # Generate the other column value first
-                other_column_info = self.get_column_info(column['table'], other_col)
-                if other_column_info:
-                    row[other_col] = self.generate_column_value(column['table'], other_column_info, row)
-                    other_value = row[other_col]
-                else:
-                    continue  # Cannot proceed without the other column
-
-            # Adjust generated_value based on the operator and other_value
-            if 'INT' in col_type or 'DECIMAL' in col_type or 'NUMERIC' in col_type:
-                if operator == '>':
-                    generated_value = max(generated_value, other_value + 1)
-                elif operator == '>=':
-                    generated_value = max(generated_value, other_value)
-                elif operator == '<':
-                    generated_value = min(generated_value, other_value - 1)
-                elif operator == '<=':
-                    generated_value = min(generated_value, other_value)
-            elif 'DATE' in col_type:
-                if operator == '>':
-                    generated_value = max(generated_value, other_value + timedelta(days=1))
-                elif operator == '>=':
-                    generated_value = max(generated_value, other_value)
-                elif operator == '<':
-                    generated_value = min(generated_value, other_value - timedelta(days=1))
-                elif operator == '<=':
-                    generated_value = min(generated_value, other_value)
-            else:
-                # Handle other types if necessary
-                pass
-
-        return generated_value
+            return self.generate_value_based_on_type(col_type)
 
     def get_column_info(self, table: str, col_name: str) -> dict:
         """
