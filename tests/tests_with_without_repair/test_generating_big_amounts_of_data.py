@@ -57,11 +57,9 @@ def generator_params(big_schema_tables):
         "Authors": {
             "first_name": "first_name",
             "last_name": "last_name",
-            "birth_date": lambda fake, row: fake.date_of_birth(minimum_age=20, maximum_age=80)
         },
         "Books": {
             "title": lambda fake, row: fake.sentence(nb_words=5),
-            "publication_year": lambda fake, row: fake.random_int(min=1900, max=date.today().year)
         },
         "Reviews": {
             "rating": lambda fake, row: fake.random_int(min=1, max=5),

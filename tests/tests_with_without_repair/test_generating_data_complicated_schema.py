@@ -112,8 +112,6 @@ def complicated_generator_params(complicated_schema_tables):
         },
         "Series": {
             "series_name": lambda fake, row: f"{fake.word().capitalize()} Collection",
-            "start_year": lambda fake, row: fake.random_int(min=1900, max=2000),
-            "end_year": lambda fake, row: fake.random_int(min=2001, max=date.today().year)
         },
         "Volumes": {
             "volume_title": lambda fake, row: fake.sentence(nb_words=5),
@@ -126,11 +124,9 @@ def complicated_generator_params(complicated_schema_tables):
         "Authors": {
             "first_name": lambda fake, row: fake.first_name(),
             "last_name": lambda fake, row: fake.last_name(),
-            "birth_year": lambda fake, row: fake.random_int(min=1850, max=1980)
         },
         "Books": {
             "title": lambda fake, row: fake.sentence(nb_words=5),
-            "publication_year": lambda fake, row: fake.random_int(min=1900, max=date.today().year)
         },
     }
     return {
