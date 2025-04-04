@@ -635,20 +635,36 @@ class DataGenerator:
 
     def enforce_check_constraints(self, table: str, row: dict):
         """
-        Enforce CHECK constraints on a table row by repeatedly proposing candidate values
-        until the CHECK constraints evaluate to True. For each failed constraint, the evaluator
-        provides updated candidate values based on its internal rules.
+        Enforce CHECK constraints on a table row by repeatedly generating candidate
+        values until all CHECK constraints evaluate to True.
+
+        This implementation evaluates all constraints at once, collects candidate
+        values for any violations, updates the row in one pass, and re-checks until
+        the row is valid.
         """
         check_constraints = self.tables[table].get('check_constraints', [])
-        for check in check_constraints:
-            # Loop until the row satisfies the constraint.
-            while not self.check_evaluator.evaluate(check, row):
-                conditions = self.check_evaluator.extract_conditions(check)
-                for col_name, conds in conditions.items():
-                    column = self.get_column_info(table, col_name)
-                    if column:
-                        # Propose a new candidate value based on all conditions for that column.
-                        row[col_name] = self.generate_value_based_on_conditions(row, column, conds)
+
+        # Loop until every constraint passes.
+        while True:
+            updates = {}  # Dictionary to collect candidate updates for all failing columns.
+            for check in check_constraints:
+                is_valid, candidate = self.check_evaluator.evaluate(check, row)
+                if not is_valid:
+                    # Extract conditions for this check.
+                    conditions = self.check_evaluator.extract_conditions(check)
+                    # For each column involved in the failing check, generate a candidate.
+                    for col_name, conds in conditions.items():
+                        column = self.get_column_info(table, col_name)
+                        if column:
+                            # Here, we assume that 'candidate' is the value your evaluator
+                            # proposes for the column. If needed, you could call an independent
+                            # candidate generator (e.g., self.generate_value_based_on_conditions(row, column, conds))
+                            updates[col_name] = candidate
+            if not updates:
+                break  # All constraints satisfied.
+            # Update all columns at once.
+            for col, new_val in updates.items():
+                row[col] = new_val
 
     def generate_value_based_on_conditions(self, row: dict, column: dict, conditions: list):
         """

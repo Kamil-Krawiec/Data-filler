@@ -62,24 +62,6 @@ def medium_data_generator(medium_schema_tables):
         "Order_Items": 100000  # largest table
     }
 
-    column_type_mappings = {
-        "Customers": {
-            "first_name": "first_name",
-            "last_name": "last_name",
-            "signup_date": lambda fake, row: fake.date_between(start_date="-10y", end_date="today")
-        },
-        "Products": {
-            "product_name": lambda fake, row: f"{fake.word().capitalize()} {fake.word().capitalize()}",
-            "category": lambda fake, row: fake.random_element(elements=["Books","Electronics","Clothing","Household"]),
-            "price": lambda fake, row: round(fake.random_number(digits=3) + fake.random.random(), 2)
-        },
-        "Orders": {
-            "order_date": lambda fake, row: fake.date_between(start_date="-5y", end_date="today")
-        },
-        "Order_Items": {
-            "quantity": lambda fake, row: fake.random_int(min=1, max=100)
-        }
-    }
 
     return DataGenerator(
         tables=medium_schema_tables,

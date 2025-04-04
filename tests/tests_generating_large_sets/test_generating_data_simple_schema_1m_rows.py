@@ -42,13 +42,6 @@ def simple_data_generator(simple_schema_tables):
     }
 
     column_type_mappings = {
-        "Users": {
-            "username": lambda fake, row: f"{fake.user_name()}{fake.random_int(min=1000, max=9999)}",
-            "join_year": lambda fake, row: fake.random_int(min=2000, max=2025)
-        },
-        "Posts": {
-            "content": lambda fake, row: fake.text(max_nb_chars=200)
-        }
     }
 
     return DataGenerator(

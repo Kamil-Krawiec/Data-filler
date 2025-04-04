@@ -1,5 +1,6 @@
 import re
 from datetime import datetime, date, timedelta
+
 from pyparsing import (
     Word, alphanums, nums, oneOf, infixNotation, opAssoc,
     ParserElement, Keyword, QuotedString, Forward, Group, Suppress, Optional, delimitedList,
@@ -206,8 +207,8 @@ class CheckConstraintEvaluator:
         """
         try:
             parsed_expr = self.expression_parser.parseString(check_expression, parseAll=True)[0]
-            result = self._evaluate_expression(parsed_expr, row)
-            return bool(result)
+            result, candidate = self._evaluate_expression(parsed_expr, row)
+            return bool(result), candidate
         except Exception as e:
             import traceback
             traceback.print_exc()
@@ -219,7 +220,6 @@ class CheckConstraintEvaluator:
         """
         Recursively flatten a nested expression (list or ParseResults) into a flat list of tokens.
         """
-        from pyparsing import ParseResults
         if not isinstance(expr, (list, ParseResults)):
             return [expr]
         flat_list = []
@@ -231,13 +231,9 @@ class CheckConstraintEvaluator:
         """
         Look for a BETWEEN clause in the token string and, if found,
         re-parse the value, lower, and upper parts to evaluate them.
-        Returns True if the BETWEEN condition holds, False if not,
-        or None if no BETWEEN clause was detected.
+        Returns a tuple (result, candidate) where candidate is proposed if the condition fails.
+        If no BETWEEN clause is detected, returns (None, None).
         """
-        # This regex captures three groups:
-        #   group1: everything before the first BETWEEN keyword,
-        #   group2: the expression after BETWEEN and before AND,
-        #   group3: everything after the first AND.
         pattern = re.compile(r'(.+?)\s+BETWEEN\s+(.+?)\s+AND\s+(.+)', re.IGNORECASE)
         match = pattern.search(tokens_str)
         if match:
@@ -253,9 +249,14 @@ class CheckConstraintEvaluator:
                     low = self.date_func(low)
                     high = self.date_func(high)
                 except ValueError:
-                    return low <= val <= high
-            return low <= val <= high
-        return None
+                    pass
+            result = low <= val <= high
+            if result:
+                return True, None
+            else:
+                candidate = low if val < low else high
+                return False, candidate
+        return None, None
 
     def _is_plain_function(self, s: str) -> bool:
         """Return True if the string looks like a plain-text function call (e.g. 'EXTRACT YEAR CURRENT_DATE')."""
@@ -290,7 +291,6 @@ class CheckConstraintEvaluator:
         ABS, COALESCE, POWER, MOD, TRIM, INITCAP, CONCAT, REGEXP_LIKE, etc.
         """
         func_name = str(expr['func_name']).upper()
-        # Map structured functions to their handling
         if func_name == 'EXTRACT':
             field = self._evaluate_expression(expr['field'], row)
             source = self._evaluate_expression(expr['source'], row)
@@ -387,13 +387,15 @@ class CheckConstraintEvaluator:
             flat = self._flatten(expr)
             tokens_str = " ".join(str(tok) for tok in flat)
             between_result = self._handle_between(tokens_str, row)
-            if between_result is not None:
-                return between_result
+            if between_result != (None, None):
+                result, candidate = between_result
+                return result, candidate
             if len(expr) == 3:
                 left_val = self._evaluate_expression(expr[0], row)
                 operator = str(expr[1]).upper()
                 right_val = self._evaluate_expression(expr[2], row)
-                return self.apply_operator(left_val, operator, right_val)
+                result, candidate = self.apply_operator(left_val, operator, right_val)
+                return result, candidate
             if len(expr) == 2:
                 operator = str(expr[0]).upper()
                 operand = self._evaluate_expression(expr[1], row)
@@ -423,12 +425,16 @@ class CheckConstraintEvaluator:
     def apply_operator(self, left, operator: str, right):
         """
         Apply a binary operator to the left and right operands.
-        This simplified version uses a mapping to reduce repetitive code.
+        Returns a tuple (result, candidate) where candidate is None if the condition is met.
+        If the condition is false, candidate is a proposed value for the left operand.
         """
         op = operator.upper()
-        # For comparison operators, unify operands.
+
+        # For comparison operators, unify operands first.
         if op in ('=', '==', '<>', '!=', '>', '<', '>=', '<='):
             left, right = self.unify_operands(left, right)
+
+        # Define mapping for standard binary operators.
         op_map = {
             '=': lambda l, r: l == r,
             '==': lambda l, r: l == r,
@@ -446,19 +452,58 @@ class CheckConstraintEvaluator:
             '/': lambda l, r: l / r,
         }
         if op in op_map:
-            return op_map[op](left, right)
-        elif op == 'LIKE':
-            return self.like(left, right)
+
+            result = op_map[op](left, right)
+            if result:
+                return True, None
+            else:
+                candidate = self._propose_candidate(op, left)
+                return False, candidate
+
+        # Operators with custom handling.
+        if op == 'LIKE':
+            result = self.like(left, right)
+            if result:
+                return True, None
+            else:
+                candidate = self._propose_candidate('LIKE', left)
+                return False, candidate
         elif op == 'NOT LIKE':
-            return self.not_like(left, right)
+            result = self.not_like(left, right)
+            if result:
+                return True, None
+            else:
+                candidate = self._propose_candidate('NOT LIKE', left)
+                return False, candidate
         elif op == 'IN':
-            return left in right
+            result = left in right
+            if result:
+                return True, None
+            else:
+                candidate = right[0] if right else None
+                return False, candidate
         elif op == 'NOT IN':
-            return left not in right
+            result = left not in right
+            if result:
+                return True, None
+            else:
+                candidate = (left + 1 if isinstance(left, (int, float))
+                             else left + "X" if isinstance(left, str)
+                else None)
+                return False, candidate
         elif op == 'IS':
-            return left is right
+            result = left is right
+            return (True, None) if result else (False, right)
         elif op == 'IS NOT':
-            return left is not right
+            result = left is not right
+            if result:
+                return True, None
+            else:
+                candidate = (not right if isinstance(right, bool)
+                             else right + 1 if isinstance(right, (int, float))
+                else right + "_diff" if isinstance(right, str)
+                else None)
+                return False, candidate
         elif op == 'BETWEEN':
             if not (isinstance(right, list) and len(right) == 2):
                 raise ValueError("BETWEEN operator expects right side as [lower, upper]")
@@ -466,9 +511,64 @@ class CheckConstraintEvaluator:
             lower, _ = self.unify_operands(lower, lower)
             upper, _ = self.unify_operands(upper, upper)
             left, _ = self.unify_operands(left, left)
-            return lower <= left <= upper
-        else:
-            raise ValueError(f"Unsupported operator '{operator}'")
+            result = lower <= left <= upper
+            if result:
+                return True, None
+            else:
+                candidate = lower if left < lower else upper
+                return False, candidate
+
+        raise ValueError(f"Unsupported operator '{operator}'")
+
+    def _propose_candidate(self, op, left):
+        """
+        Propose a candidate for the left operand so that the binary condition becomes True.
+        The candidate is computed solely from the current left value.
+        For numeric types, it adds or subtracts a fixed delta.
+        For dates, it adds or subtracts one day.
+        For strings, it appends or prepends a minimal modification.
+        """
+        op = op.upper()
+
+        # For equality, we simply return the left value (since we cannot adjust it without external info).
+        if op in ('=', '=='):
+            return left
+
+        # For greater-than operators, adjust left upward.
+        if op in ('>', '>='):
+            if isinstance(left, (int, float)):
+                return left + 1  # A small fixed increase.
+            elif isinstance(left, date):
+                return left + timedelta(days=1)
+            elif isinstance(left, str):
+                return left + "a"  # Append a minimal character.
+
+        # For less-than operators, adjust left downward.
+        if op in ('<', '<='):
+            if isinstance(left, (int, float)):
+                return left - 1  # A small fixed decrease.
+            elif isinstance(left, date):
+                return left - timedelta(days=1)
+            elif isinstance(left, str):
+                return "a" + left  # Prepend a minimal character.
+
+        # For LIKE conditions, modify left by appending a fixed suffix.
+        if op == 'LIKE':
+            if isinstance(left, str):
+                return left + "_fix"
+            else:
+                return left
+
+        # For NOT LIKE, modify left by appending a distinguishing suffix.
+        if op == 'NOT LIKE':
+            if isinstance(left, str):
+                return left + "_diff"
+            else:
+                return left
+
+        # For operators like IN, NOT IN, IS, IS NOT, or any unsupported operator,
+        # simply return left as a fallback.
+        return left
 
     def date_func(self, arg):
         """
@@ -634,19 +734,30 @@ class CheckConstraintEvaluator:
         else:
             raise ValueError(f"Unsupported field '{field}' for EXTRACT function")
 
-    def regexp_like(self, value: str, pattern: str) -> bool:
+    def regexp_like(self, value: str, pattern: str) -> tuple:
         """
         Simulate the SQL REGEXP_LIKE function.
+
+        Returns:
+            tuple: (result, candidate)
+              - result (bool): True if 'value' matches the regex 'pattern', False otherwise.
+              - candidate (str or None): If result is False, a candidate string that satisfies the regex,
+                                         or an empty string if no candidate was found; if result is True, None.
         """
         if pattern.startswith("'") and pattern.endswith("'"):
             pattern = pattern[1:-1]
         if not isinstance(value, str):
             value = str(value)
         try:
-            return re.match(pattern, value) is not None
+            result = re.match(pattern, value) is not None
         except re.error as e:
             print(f"Regex error: {e}")
-            return False
+            return False, ""
+        if result:
+            return True, None
+        else:
+            candidate = self._generate_candidate_for_regex(pattern)
+            return False, candidate
 
     def like(self, value: str, pattern: str) -> bool:
         """
