@@ -9,7 +9,7 @@ import numpy as np
 from datetime import datetime, date, timedelta
 from faker import Faker
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
+from filling import ColumnMappingsGenerator
 from .check_constraint_evaluator import CheckConstraintEvaluator
 from .helpers import (
     extract_regex_pattern, generate_value_matching_regex,
@@ -35,7 +35,9 @@ class DataGenerator:
                  predefined_values=None,
                  column_type_mappings=None,
                  num_rows_per_table=None,
-                 max_attepts_to_generate_value=50):
+                 max_attepts_to_generate_value=50,
+                 guess_column_type_mappings = False,
+                 threshold_for_guessing=0.8):
         self.tables = tables
         self.num_rows = num_rows
         self.num_rows_per_table = num_rows_per_table or {}
@@ -53,6 +55,11 @@ class DataGenerator:
         self.column_type_mappings = column_type_mappings or {}
         self.column_info_cache = {}
         self.max_attempts = max_attepts_to_generate_value
+
+        if guess_column_type_mappings:
+            self.column_type_mappings = ColumnMappingsGenerator(
+                threshold=threshold_for_guessing
+            ).generate(tables)
 
     # --------------------------------------------------------------------------
     # Schema / Dependency Setup
@@ -760,7 +767,6 @@ class DataGenerator:
         logger.info("Data generation finished.")
         return self.generated_data
 
-
     # --------------------------------------------------------------------------
     # Export
     # --------------------------------------------------------------------------
@@ -778,7 +784,7 @@ class DataGenerator:
 
             # Chunk to avoid huge single insert
             for i in range(0, len(rows), max_rows_per_insert):
-                chunk = rows[i : i + max_rows_per_insert]
+                chunk = rows[i: i + max_rows_per_insert]
                 vals_list = []
                 for record in chunk:
                     row_vals = []
