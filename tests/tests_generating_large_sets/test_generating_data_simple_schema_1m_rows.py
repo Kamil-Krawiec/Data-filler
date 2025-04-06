@@ -140,7 +140,7 @@ def test_simple_schema_massive_generation(simple_data_generator):
 
     # 1) With repair
     start_repair = time.time()
-    data_repair = simple_data_generator.generate_data(run_repair=True, print_stats=False)
+    data_repair = simple_data_generator.generate_data()
     time_repair = time.time() - start_repair
 
     repair_violations = verify_simple_schema_data(data_repair, logger)

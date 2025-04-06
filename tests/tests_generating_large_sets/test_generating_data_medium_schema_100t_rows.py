@@ -67,7 +67,6 @@ def medium_data_generator(medium_schema_tables):
         tables=medium_schema_tables,
         num_rows=5000,  # baseline if not overridden
         predefined_values=None,
-        column_type_mappings=column_type_mappings,
         num_rows_per_table=num_rows_per_table
     )
 
@@ -179,14 +178,14 @@ def test_medium_schema_generation(medium_data_generator):
 
     # With repair
     start_repair = time.time()
-    data_with_repair = medium_data_generator.generate_data(run_repair=True, print_stats=False)
+    data_with_repair = medium_data_generator.generate_data()
     elapsed_repair = time.time() - start_repair
 
     repair_violations = verify_medium_schema_data(data_with_repair, logger)
 
     # Without repair
     start_norepair = time.time()
-    data_without_repair = medium_data_generator.generate_data(run_repair=False, print_stats=False)
+    data_without_repair = medium_data_generator.generate_data()
     elapsed_norepair = time.time() - start_norepair
 
     norepair_violations = verify_medium_schema_data(data_without_repair, logger)

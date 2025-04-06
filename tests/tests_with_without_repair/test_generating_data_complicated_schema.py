@@ -104,36 +104,9 @@ def complicated_generator_params(complicated_schema_tables):
         "BookAuthors": 300
     }
     predefined_values = {}
-    column_type_mappings = {
-        "Publishers": {
-            "name": lambda fake, row: fake.company(),
-            "country": lambda fake, row: fake.country(),
-            "established_year": lambda fake, row: fake.random_int(min=1500, max=1950)
-        },
-        "Series": {
-            "series_name": lambda fake, row: f"{fake.word().capitalize()} Collection",
-        },
-        "Volumes": {
-            "volume_title": lambda fake, row: fake.sentence(nb_words=5),
-            "issue_date": lambda fake, row: fake.date_between(start_date="-30y", end_date="today")
-        },
-        "Orders": {
-            "order_quantity": lambda fake, row: fake.random_int(min=1, max=5000),
-            "order_date": lambda fake, row: fake.date_between(start_date="-2y", end_date="today")
-        },
-        "Authors": {
-            "first_name": lambda fake, row: fake.first_name(),
-            "last_name": lambda fake, row: fake.last_name(),
-        },
-        "Books": {
-            "title": lambda fake, row: fake.sentence(nb_words=5),
-        },
-    }
     return {
         "tables": complicated_schema_tables,
-        "num_rows": 50,  # Fallback if not overridden
-        "predefined_values": predefined_values,
-        "column_type_mappings": column_type_mappings,
+        "num_rows": 50,
         "num_rows_per_table": num_rows_per_table
     }
 
@@ -275,23 +248,6 @@ def check_complicated_data_validity(data):
     violations["total"] = total
     return violations
 
-
-def test_complicated_data_generation_with_repair(complicated_generator_params):
-    """
-    Standalone test for complicated schema data generation with repair enabled.
-    Generates data, checks validity using standalone functions, and logs a summary table.
-    """
-    data_generator_with = DataGenerator(**complicated_generator_params)
-    start = time.time()
-    data_with_repair = data_generator_with.generate_data(run_repair=True, print_stats=False)
-    generation_time = time.time() - start
-
-    validity = check_complicated_data_validity(data_with_repair)
-    log_complicated_summary(data_with_repair, generation_time, mode="WITH REPAIR")
-    logger.info("Validation violations (WITH REPAIR): %s", validity)
-    assert validity["total"] == 0, "Repaired data contains constraint violations!"
-
-
 def test_complicated_data_generation_without_repair(complicated_generator_params):
     """
     Standalone test for complicated schema data generation without repair.
@@ -299,7 +255,7 @@ def test_complicated_data_generation_without_repair(complicated_generator_params
     """
     data_generator_without = DataGenerator(**complicated_generator_params)
     start = time.time()
-    data_without_repair = data_generator_without.generate_data(run_repair=False, print_stats=False)
+    data_without_repair = data_generator_without.generate_data()
     generation_time = time.time() - start
 
     validity = check_complicated_data_validity(data_without_repair)

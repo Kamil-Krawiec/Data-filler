@@ -168,47 +168,6 @@ class CheckConstraintEvaluator:
             return value
         return value
 
-    def extract_columns_from_check(self, check: str) -> list:
-        """
-        Extract column names from a CHECK constraint expression.
-        """
-        identifiers = []
-
-        def identifier_action(tokens):
-            identifiers.append(tokens[0])
-
-        integer = Word(nums)
-        real = Word(nums + ".")
-        string = QuotedString("'", escChar='\\')
-        identifier = Word(alphanums, alphanums + "_$").setName("identifier")
-        identifier.addParseAction(identifier_action)
-
-        arith_op = oneOf('+ - * /')
-        comp_op = oneOf('= != <> < > <= >= IN NOT IN LIKE NOT LIKE IS IS NOT', caseless=True)
-        bool_op = oneOf('AND OR', caseless=True)
-        not_op = Keyword('NOT', caseless=True)
-
-        lpar = Suppress('(')
-        rpar = Suppress(')')
-
-        expr = Forward()
-        atom = real | integer | string | identifier | Group(lpar + expr + rpar)
-        expr <<= infixNotation(atom, [
-            (not_op, 1, opAssoc.RIGHT),
-            (arith_op, 2, opAssoc.LEFT),
-            (comp_op, 2, opAssoc.LEFT),
-            (bool_op, 2, opAssoc.LEFT),
-        ])
-        try:
-            expr.parseString(check, parseAll=True)
-        except Exception:
-            pass
-
-        keywords = {'AND', 'OR', 'NOT', 'IN', 'LIKE', 'IS', 'NULL', 'BETWEEN',
-                    'EXISTS', 'ALL', 'ANY', 'SOME', 'TRUE', 'FALSE', 'CURRENT_DATE'}
-        operators = {'=', '!=', '<>', '<', '>', '<=', '>=', '+', '-', '*', '/', '%', 'IS', 'NOT'}
-        return [token for token in set(identifiers) if token.upper() not in keywords and token not in operators]
-
     def evaluate(self, check_expression: str, row: dict) -> bool:
         """
         Evaluate a CHECK constraint expression against a row.
