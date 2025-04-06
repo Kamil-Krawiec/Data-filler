@@ -2,15 +2,15 @@ import re
 from datetime import datetime, date, timedelta
 
 from pyparsing import (
-    Word, alphanums, nums, oneOf, infixNotation, opAssoc,
-    ParserElement, Keyword, QuotedString, Forward, Group, Suppress, Optional, delimitedList,
-    ParseResults, Combine
+    Word, alphas, alphanums, quotedString, removeQuotes,
+    delimitedList, Literal, CaselessKeyword, Group, ParserElement, oneOf,
+    Suppress,    nums, infixNotation, opAssoc,
+    Keyword, QuotedString, Forward, Optional, ParseResults, Combine
 )
 from .helpers import generate_value_matching_regex
 
 # Enable packrat parsing once
 ParserElement.enablePackrat()
-
 
 class CheckConstraintEvaluator:
     """
@@ -33,9 +33,6 @@ class CheckConstraintEvaluator:
         self.parsed_constraint_cache = {}
 
     def _create_expression_parser(self):
-        """
-        Create and configure the pyparsing parser for SQL CHECK constraints.
-        """
         ParserElement.enablePackrat()
 
         # Basic elements
@@ -56,24 +53,33 @@ class CheckConstraintEvaluator:
 
         expr = Forward()
 
-        # Function call parsing
+        # Function call parsing (unchanged)
         func_call = Group(identifier('func_name') + lpar + Optional(delimitedList(expr))('args') + rpar)
-
-        # EXTRACT function parsing
         extract_func = Group(
             Keyword('EXTRACT', caseless=True)('func_name') + lpar +
             (identifier | string)('field') +
             Keyword('FROM', caseless=True).suppress() +
             expr('source') + rpar
         )
-
-        # DATE function parsing
         date_func = Group(
             Keyword('DATE', caseless=True)('func_name') + lpar + expr('args') + rpar
         )
 
-        # Atom: a number, string, identifier, function call, or parenthesized expression
-        atom = extract_func | func_call | date_func | number | string | identifier | Group(lpar + expr + rpar)
+        # -- NEW: define a parenthesized list of strings/numbers. --
+        list_content = delimitedList(string ^ number)  # allows `'M','F'` or numeric
+        list_atom = Group(lpar + list_content("list_values") + rpar)("list_atom")
+
+        # Now define the 'atom' so it includes list_atom:
+        atom = (
+                extract_func
+                | func_call
+                | date_func
+                | list_atom
+                | number
+                | string
+                | identifier
+                | Group(lpar + expr + rpar)
+        )
 
         expr <<= infixNotation(
             atom,
@@ -84,6 +90,7 @@ class CheckConstraintEvaluator:
                 (bool_op, 2, opAssoc.LEFT),
             ]
         )
+
         return expr
 
     def _get_parsed_expression(self, check_expression: str):
@@ -215,7 +222,7 @@ class CheckConstraintEvaluator:
             traceback.print_exc()
             print(f"Error evaluating check constraint: {e}")
             print(f"Constraint: {check_expression}")
-            return False
+            return False, None
 
     def _flatten(self, expr):
         """
@@ -394,7 +401,19 @@ class CheckConstraintEvaluator:
             if len(expr) == 3:
                 left_val = self._evaluate_expression(expr[0], row)
                 operator = str(expr[1]).upper()
-                right_val = self._evaluate_expression(expr[2], row)
+                right_expr = expr[2]
+
+                if operator in ('IN', 'NOT IN') and isinstance(right_expr, (list, ParseResults)):
+                    # Each item inside right_expr might be a quoted string or a numeric literal
+                    right_val = []
+                    for item in right_expr:
+                        # Evaluate each item so "'M'" -> "M"
+                        val = self._evaluate_expression(item, row)
+                        right_val.append(val)
+                else:
+                    # Otherwise, just do the normal evaluation
+                    right_val = self._evaluate_expression(right_expr, row)
+
                 result, candidate = self.apply_operator(left_val, operator, right_val)
                 return result, candidate
             if len(expr) == 2:
@@ -403,7 +422,11 @@ class CheckConstraintEvaluator:
                 if operator == 'NOT':
                     return not operand
                 else:
-                    raise ValueError(f"Unsupported unary operator '{operator}'")
+                    try:
+                        return self._evaluate_literal(operator,treat_as_identifier=True), None
+                    except Exception as e:
+                        print(f"Error evaluating operator '{operator}': {e}")
+                        return False, None
             result = None
             for item in expr:
                 result = self._evaluate_expression(item, row)

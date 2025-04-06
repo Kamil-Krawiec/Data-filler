@@ -640,6 +640,15 @@ class DataGenerator:
         elif re.match(r'.*\b(TIME)\b.*', col_type):
             return self.fake.time()
 
+        elif re.match(r'^ENUM\(', col_type):
+            # Parse the enum definition, e.g. ENUM('M','F','OTHER')
+            enum_match = re.match(r"^ENUM\((.*)\)$", col_type)
+            if enum_match:
+                raw_vals = enum_match.group(1)  # e.g. "'M','F','OTHER'"
+                # Split by commas and strip extra quotes/spaces
+                choices = [val.strip().strip("'") for val in raw_vals.split(',')]
+                return random.choice(choices)
+
         # Text / Char
         elif re.match(r'.*\b(CHAR|NCHAR|VARCHAR|NVARCHAR|CHARACTER VARYING|TEXT)\b.*', col_type):
             length_match = re.search(r'\((\d+)\)', col_type)

@@ -46,7 +46,7 @@ def various_pk_sql():
     CREATE TABLE Seats (
         id1 SERIAL NOT NULL,
         id2 VARCHAR(3) NOT NULL PRIMARY KEY,
-        row BIGINT NOT NULL,
+        row BIGINT NOT NULL CHECK ( row > 0 ),
         seat INT UNSIGNED NOT NULL,
         theater_id BIGINT UNSIGNED NOT NULL
     );

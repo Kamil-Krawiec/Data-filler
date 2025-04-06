@@ -25,7 +25,8 @@ CREATE TABLE Authors (
     first_name VARCHAR(50) NOT NULL,
     last_name VARCHAR(50) NOT NULL,
     birth_date DATE NOT NULL,
-
+    
+    CONSTRAINT sex_check CHECK (sex IN ('M', 'F')),
     CONSTRAINT unique_author_name UNIQUE (first_name, last_name)
 );
 
@@ -55,7 +56,8 @@ CREATE TABLE Books (
         CHECK (isbn ~ '^\d{13}$'),
 
     CONSTRAINT chk_publication_year
-        CHECK (publication_year >= 1900 AND publication_year <= EXTRACT(YEAR FROM CURRENT_DATE))
+        CHECK (publication_year >= 1900 AND publication_year <= EXTRACT(YEAR FROM CURRENT_DATE)),
+    CONSTRAINT chk_penalty_rate CHECK (penalty_rate > 0)
 );
 
 CREATE TABLE Members (
