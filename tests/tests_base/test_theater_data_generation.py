@@ -33,8 +33,6 @@ def theater_data_generator(theater_tables_parsed):
         tables=theater_tables_parsed,
         num_rows=100,
         predefined_values=predefined_values,
-        column_type_mappings=column_type_mappings,
-        num_rows_per_table=num_rows_per_table
     )
 
 

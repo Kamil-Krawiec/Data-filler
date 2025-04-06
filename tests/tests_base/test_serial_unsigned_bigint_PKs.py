@@ -168,7 +168,7 @@ def test_constraints_seats(various_pk_data_generator):
     """
     data = various_pk_data_generator.generate_data()
     seats_rows = data["Seats"]
-    assert len(seats_rows) == 5, "Expected 5 rows in Seats table"
+    assert len(seats_rows) == 100, "Expected 5 rows in Seats table"
 
     prev_id1 = 0
     for row in seats_rows:

@@ -98,7 +98,6 @@ def employees_data_generator(employees_tables_parsed):
     return DataGenerator(
         tables=employees_tables_parsed,
         num_rows=100,
-        column_type_mappings=column_type_mappings,
     )
 
 def test_parse_employees_schema(employees_tables_parsed):

@@ -136,8 +136,6 @@ def library_data_generator(library_tables_parsed):
     return DataGenerator(
         tables=library_tables_parsed,
         num_rows=100,
-        predefined_values=predefined_values,
-        num_rows_per_table=num_rows_per_table
     )
 
 
