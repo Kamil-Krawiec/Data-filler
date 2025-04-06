@@ -46,7 +46,7 @@ def various_pk_sql():
     CREATE TABLE Seats (
         id1 SERIAL NOT NULL,
         id2 VARCHAR(3) NOT NULL PRIMARY KEY,
-        row BIGINT NOT NULL,
+        row BIGINT NOT NULL CHECK ( row > 0 ),
         seat INT UNSIGNED NOT NULL,
         theater_id BIGINT UNSIGNED NOT NULL
     );
@@ -69,39 +69,11 @@ def various_pk_data_generator(various_pk_tables_parsed):
     We'll define custom column mappings as needed.
     """
     # For seats, we reuse the logic from your seats example:
-    column_type_mappings = {
-        "Seats": {
-            "row": lambda fake, row: fake.random_int(min=1, max=9999),
-            "seat": lambda fake, row: fake.random_int(min=0, max=500),  # Unsigned => >= 0
-            "theater_id": lambda fake, row: fake.random_int(min=0, max=1000),
-            "id2": lambda fake, row: fake.lexify(text='???')  # 3-char string
-        },
-        "date_pk_table": {
-            # 'date_id' is PK => the generator will call generate_primary_keys or composite PK logic
-            # If single PK, it auto-calls generate_primary_keys => if it's not numeric, it uses the
-            # "non-numeric PK" logic. So we can also define a fallback e.g. "some_col".
-            "some_col": lambda fake, row: fake.word()
-        },
-        "date_int_pk_table": {
-            "some_col": lambda fake, row: fake.sentence(nb_words=3)
-        },
-        "date_varchar_pk_table": {
-            "another_col": lambda fake, row: fake.random_int(min=0, max=9999)
-        }
-    }
 
-    num_rows_per_table = {
-        "date_pk_table": 5,
-        "date_int_pk_table": 5,
-        "date_varchar_pk_table": 5,
-        "Seats": 5
-    }
 
     return DataGenerator(
         tables=various_pk_tables_parsed,
-        num_rows=5,  # fallback for any table not in num_rows_per_table
-        column_type_mappings=column_type_mappings,
-        num_rows_per_table=num_rows_per_table
+        num_rows=100,
     )
 
 
@@ -124,7 +96,7 @@ def test_generate_data_various_pk(various_pk_data_generator):
 
     for tbl in ("date_pk_table", "date_int_pk_table", "date_varchar_pk_table", "Seats"):
         assert tbl in data, f"Missing {tbl} from generated data"
-        assert len(data[tbl]) == 5, f"Expected 5 rows in {tbl}, found {len(data[tbl])}"
+        assert len(data[tbl]) == 100, f"Expected 100 rows in {tbl}, found {len(data[tbl])}"
 
 
 def test_constraints_date_pk_table(various_pk_data_generator):
@@ -196,7 +168,7 @@ def test_constraints_seats(various_pk_data_generator):
     """
     data = various_pk_data_generator.generate_data()
     seats_rows = data["Seats"]
-    assert len(seats_rows) == 5, "Expected 5 rows in Seats table"
+    assert len(seats_rows) == 100, "Expected 100 rows in Seats table"
 
     prev_id1 = 0
     for row in seats_rows:

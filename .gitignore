@@ -162,3 +162,6 @@ cython_debug/
 #.idea/
 
 DB_infos
+
+my_tests
+fake_data

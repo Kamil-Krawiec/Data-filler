@@ -81,7 +81,7 @@ def employees_tables_parsed(employees_sql_script):
     Parse the CREATE TABLE statements using your parse_create_tables() function.
     Returns a dict of table definitions.
     """
-    return parse_create_tables(employees_sql_script)
+    return parse_create_tables(employees_sql_script, dialect='mysql')
 
 @pytest.fixture
 def employees_data_generator(employees_tables_parsed):
@@ -93,48 +93,11 @@ def employees_data_generator(employees_tables_parsed):
     - departments.dept_no => something like 'd001'
     - etc.
     """
-    # Example of how you might define custom generation logic
-    column_type_mappings = {
-        'employees': {
-            # For the PK emp_no, the DataGenerator might do auto-increment; or we do it ourselves.
-            'emp_no': lambda fake, row: None,  # let auto-increment or is_serial handle it
-            'birth_date': lambda fake, row: fake.date_of_birth(minimum_age=18, maximum_age=70),
-            'gender': lambda fake, row: fake.random_element(elements=('M','F')),
-            'hire_date': lambda fake, row: fake.date_between(start_date='-30y', end_date='today'),
-        },
-        'departments': {
-            'dept_no': lambda fake, row: f"d{fake.random_int(min=1, max=999):03d}",
-        },
-        'dept_emp': {
-            # from_date, to_date => random dates
-        },
-        'dept_manager': {
-            # from_date, to_date => random dates
-        },
-        'titles': {
-            # title => random job title, from_date => random
-        },
-        'salaries': {
-            'salary': lambda fake, row: fake.random_int(min=30000, max=200000),
-            # from_date => random
-        }
-    }
-
-    num_rows_per_table = {
-        'employees': 10,
-        'departments': 5,
-        'dept_emp': 20,
-        'dept_manager': 5,
-        'titles': 15,
-        'salaries': 15,
-    }
 
     # Create the DataGenerator
     return DataGenerator(
         tables=employees_tables_parsed,
-        num_rows=5,  # fallback
-        column_type_mappings=column_type_mappings,
-        num_rows_per_table=num_rows_per_table
+        num_rows=100,
     )
 
 def test_parse_employees_schema(employees_tables_parsed):
