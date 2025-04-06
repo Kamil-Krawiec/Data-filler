@@ -131,45 +131,12 @@ def library_data_generator(library_tables_parsed):
             ]
         },
     }
-    column_type_mappings = {
-        'Authors': {
-            'sex': lambda fake, row: fake.random_element(elements=('M','F')),
-            'first_name': lambda fake, row: fake.first_name(),
-            'last_name': lambda fake, row: fake.last_name(),
-            'birth_date': lambda fake, row: fake.date_of_birth(minimum_age=25, maximum_age=90),
-        },
-        'Books': {
-            'isbn': lambda fake, row: ''.join(str(fake.random_digit()) for _ in range(13)),
-            'publication_year': lambda fake, row: fake.random_int(min=1900, max=date.today().year),
-            'penalty_rate': lambda fake, row: float(fake.random_int(min=1, max=30)),
-        },
-        'Members': {
-            'email': 'email',
-            'registration_date': lambda fake, row: fake.date_between(start_date='-5y', end_date='today'),
-        },
-        'Loans': {
-            'loan_date': lambda fake, row: fake.date_between(start_date='-2y', end_date='today'),
-            'due_date': lambda fake, row: fake.date_between(start_date='-2y', end_date='today'),
-        },
-        'Penalties': {
-            'penalty_amount': lambda fake, row: float(fake.random_int(min=1, max=100)),
-            'penalty_date': lambda fake, row: fake.date_between(start_date='-2y', end_date='today'),
-        }
-    }
-    num_rows_per_table = {
-        'Authors': 10,
-        'Categories': 5,
-        'Books': 30,
-        'Members': 10,
-        'Loans': 15,
-        'Penalties': 5,
-    }
+
 
     return DataGenerator(
         tables=library_tables_parsed,
-        num_rows=10,
+        num_rows=100,
         predefined_values=predefined_values,
-        column_type_mappings=column_type_mappings,
         num_rows_per_table=num_rows_per_table
     )
 

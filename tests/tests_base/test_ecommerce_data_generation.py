@@ -49,46 +49,12 @@ def ecommerce_data_generator(ecommerce_tables_parsed):
             ]
         }
     }
-    column_type_mappings = {
-        'global': {
-            'first_name': 'first_name',
-            'last_name': 'last_name',
-            'email': 'email',
-            'phone': lambda fake, row: fake.phone_number()[:15],
-        },
-        'Customers': {
-            'registration_date': lambda fake, row: fake.date_between(start_date='-5y', end_date='today'),
-        },
-        'Suppliers': {
-            'contact_name': 'name',
-            'contact_email': 'email',
-        },
-        'Orders': {
-            'order_date': lambda fake, row: fake.date_between(start_date='-2y', end_date='today'),
-        },
-        'Products': {
-            'price': lambda fake, row: round(random.uniform(5, 2000), 2),
-            'stock_quantity': lambda fake, row: random.randint(0, 500),
-        },
-        'ProductSuppliers': {
-            'supply_price': lambda fake, row: round(random.uniform(1, 1000), 2),
-        }
-    }
-    num_rows_per_table = {
-        'Customers': 50,
-        'Products': 10,
-        'Orders': 20,
-        'OrderItems': 50,
-        'Suppliers': 5,
-        'ProductSuppliers': 20,
-    }
+
 
     return DataGenerator(
         tables=ecommerce_tables_parsed,
-        num_rows=10,  # fallback if not in num_rows_per_table
+        num_rows=100,  # fallback if not in num_rows_per_table
         predefined_values=predefined_values,
-        column_type_mappings=column_type_mappings,
-        num_rows_per_table=num_rows_per_table
     )
 
 

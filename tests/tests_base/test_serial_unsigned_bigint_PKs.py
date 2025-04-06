@@ -69,39 +69,11 @@ def various_pk_data_generator(various_pk_tables_parsed):
     We'll define custom column mappings as needed.
     """
     # For seats, we reuse the logic from your seats example:
-    column_type_mappings = {
-        "Seats": {
-            "row": lambda fake, row: fake.random_int(min=1, max=9999),
-            "seat": lambda fake, row: fake.random_int(min=0, max=500),  # Unsigned => >= 0
-            "theater_id": lambda fake, row: fake.random_int(min=0, max=1000),
-            "id2": lambda fake, row: fake.lexify(text='???')  # 3-char string
-        },
-        "date_pk_table": {
-            # 'date_id' is PK => the generator will call generate_primary_keys or composite PK logic
-            # If single PK, it auto-calls generate_primary_keys => if it's not numeric, it uses the
-            # "non-numeric PK" logic. So we can also define a fallback e.g. "some_col".
-            "some_col": lambda fake, row: fake.word()
-        },
-        "date_int_pk_table": {
-            "some_col": lambda fake, row: fake.sentence(nb_words=3)
-        },
-        "date_varchar_pk_table": {
-            "another_col": lambda fake, row: fake.random_int(min=0, max=9999)
-        }
-    }
 
-    num_rows_per_table = {
-        "date_pk_table": 5,
-        "date_int_pk_table": 5,
-        "date_varchar_pk_table": 5,
-        "Seats": 5
-    }
 
     return DataGenerator(
         tables=various_pk_tables_parsed,
-        num_rows=5,  # fallback for any table not in num_rows_per_table
-        column_type_mappings=column_type_mappings,
-        num_rows_per_table=num_rows_per_table
+        num_rows=100,
     )
 
 

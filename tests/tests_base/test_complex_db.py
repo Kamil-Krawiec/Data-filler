@@ -87,7 +87,7 @@ def test_complex_sql_schema():
     """
     # Parse the schema and generate data.
     tables = parse_create_tables(sql_script)
-    generator = DataGenerator(tables, num_rows=10)
+    generator = DataGenerator(tables, num_rows=100)
     data = generator.generate_data(run_repair=True, print_stats=False)
     current_year = date.today().year
 

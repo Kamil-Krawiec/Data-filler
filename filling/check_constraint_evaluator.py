@@ -6,6 +6,7 @@ from pyparsing import (
     ParserElement, Keyword, QuotedString, Forward, Group, Suppress, Optional, delimitedList,
     ParseResults, Combine
 )
+from .helpers import generate_value_matching_regex
 
 # Enable packrat parsing once
 ParserElement.enablePackrat()
@@ -756,8 +757,9 @@ class CheckConstraintEvaluator:
         if result:
             return True, None
         else:
-            candidate = self._generate_candidate_for_regex(pattern)
+            candidate = generate_value_matching_regex(pattern)
             return False, candidate
+
 
     def like(self, value: str, pattern: str) -> bool:
         """

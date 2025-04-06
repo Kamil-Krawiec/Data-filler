@@ -27,38 +27,11 @@ def theater_data_generator(theater_tables_parsed):
     Returns a DataGenerator instance configured for the Theater schema.
     """
     predefined_values = {}
-    column_type_mappings = {
-        'Theaters': {
-            'name': lambda fake, row: fake.word()[:10],  # ensuring <= 10 chars
-            'capacity': lambda fake, row: fake.random_int(min=1, max=199),
-        },
-        'Movies': {
-            'duration': lambda fake, row: fake.random_int(min=60, max=200),
-            'penalty_rate': lambda fake, row: float(fake.random_int(min=1, max=50)),
-        },
-        'Seats': {
-            'row': lambda fake, row: fake.random_int(min=1, max=20),
-            'seat': lambda fake, row: fake.random_int(min=1, max=25),
-        },
-        'Shows': {
-            'show_date': lambda fake, row: fake.date_between(start_date='-40y', end_date='today'),
-            'show_starts_at': lambda fake, row: fake.time(),
-        },
-        'Tickets': {
-            'price': lambda fake, row: round(fake.random_number(digits=3, fix_len=False), 2),
-        }
-    }
-    num_rows_per_table = {
-        'Theaters': 5,
-        'Seats': 50,
-        'Movies': 10,
-        'Shows': 20,
-        'Tickets': 50,
-    }
+
 
     return DataGenerator(
         tables=theater_tables_parsed,
-        num_rows=10,
+        num_rows=100,
         predefined_values=predefined_values,
         column_type_mappings=column_type_mappings,
         num_rows_per_table=num_rows_per_table

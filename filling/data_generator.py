@@ -644,11 +644,23 @@ class DataGenerator:
         """
         check_constraints = self.tables[table].get('check_constraints', [])
 
+        for check in check_constraints:
+            # Loop until the row satisfies the constraint.
+            conditions = self.check_evaluator.extract_conditions(check)
+            for col_name, conds in conditions.items():
+                column = self.get_column_info(table, col_name)
+                if column:
+                    # Propose a new candidate value based on all conditions for that column.
+                    row[col_name] = self.generate_value_based_on_conditions(row, column, conds)
+
         # Loop until every constraint passes.
         while True:
             updates = {}  # Dictionary to collect candidate updates for all failing columns.
             for check in check_constraints:
-                is_valid, candidate = self.check_evaluator.evaluate(check, row)
+                try:
+                    is_valid, candidate = self.check_evaluator.evaluate(check, row)
+                except Exception as e:
+                    print("s")
                 if not is_valid:
                     # Extract conditions for this check.
                     conditions = self.check_evaluator.extract_conditions(check)
@@ -656,9 +668,6 @@ class DataGenerator:
                     for col_name, conds in conditions.items():
                         column = self.get_column_info(table, col_name)
                         if column:
-                            # Here, we assume that 'candidate' is the value your evaluator
-                            # proposes for the column. If needed, you could call an independent
-                            # candidate generator (e.g., self.generate_value_based_on_conditions(row, column, conds))
                             updates[col_name] = candidate
             if not updates:
                 break  # All constraints satisfied.
