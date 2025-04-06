@@ -96,7 +96,7 @@ def test_generate_data_various_pk(various_pk_data_generator):
 
     for tbl in ("date_pk_table", "date_int_pk_table", "date_varchar_pk_table", "Seats"):
         assert tbl in data, f"Missing {tbl} from generated data"
-        assert len(data[tbl]) == 5, f"Expected 5 rows in {tbl}, found {len(data[tbl])}"
+        assert len(data[tbl]) == 100, f"Expected 100 rows in {tbl}, found {len(data[tbl])}"
 
 
 def test_constraints_date_pk_table(various_pk_data_generator):
@@ -168,7 +168,7 @@ def test_constraints_seats(various_pk_data_generator):
     """
     data = various_pk_data_generator.generate_data()
     seats_rows = data["Seats"]
-    assert len(seats_rows) == 100, "Expected 5 rows in Seats table"
+    assert len(seats_rows) == 100, "Expected 100 rows in Seats table"
 
     prev_id1 = 0
     for row in seats_rows:
