@@ -33,7 +33,8 @@ class DataGenerator:
                  num_rows=10,
                  predefined_values=None,
                  column_type_mappings=None,
-                 num_rows_per_table=None):
+                 num_rows_per_table=None,
+                 max_attepts_to_generate_value=50):
         self.tables = tables
         self.num_rows = num_rows
         self.num_rows_per_table = num_rows_per_table or {}
@@ -50,6 +51,7 @@ class DataGenerator:
         self.predefined_values = predefined_values or {}
         self.column_type_mappings = column_type_mappings or {}
         self.column_info_cache = {}
+        self.max_attempts = max_attepts_to_generate_value
 
     # --------------------------------------------------------------------------
     # Schema / Dependency Setup
@@ -397,7 +399,7 @@ class DataGenerator:
                     row[col_name] = self.generate_value_based_on_conditions(row, col_info, conds)
 
         # Next, loop until all constraints are satisfied or a certain threshold is met
-        max_attempts = 50
+        max_attempts = self.max_attempts
         attempts = 0
         while True:
             updates = {}
