@@ -8,6 +8,7 @@ import random
 import numpy as np
 from datetime import datetime, date, timedelta
 from faker import Faker
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from .check_constraint_evaluator import CheckConstraintEvaluator
 from .helpers import (
@@ -132,13 +133,49 @@ class DataGenerator:
     # Data Generation (Initial Rows)
     # --------------------------------------------------------------------------
 
+    def compute_table_levels(self) -> dict:
+        """
+        Return a dict like {level_number: [tableA, tableB, ...], ...}
+        that groups tables by 'level' in the foreign-key dependency graph.
+        """
+        # Start with the linear topological order you already have:
+        topo_order = self.table_order  # or self.resolve_table_order()
+        # 'levels' will hold {table: level_int}
+        levels = {}
+        for table in topo_order:
+            fks = self.tables[table].get('foreign_keys', [])
+            if not fks:
+                levels[table] = 0
+                continue
+            parent_levels = []
+            for fk in fks:
+                parent_tab = fk['ref_table']
+                parent_levels.append(levels.get(parent_tab, 0))
+            levels[table] = max(parent_levels) + 1
+
+        level_groups = {}
+        for table, lvl in levels.items():
+            level_groups.setdefault(lvl, []).append(table)
+        return level_groups
+
     def generate_initial_data(self):
         """
-        Generate initial data for all tables in a straightforward sequence.
-        (No concurrency.)
+        Generate initial data in parallel groups by table level.
         """
-        for table in self.table_order:
-            self._generate_table_initial_data(table)
+        level_groups = self.compute_table_levels()
+        for level in sorted(level_groups.keys()):
+            tables_at_level = level_groups[level]
+            # For concurrency: run each table’s generation in a thread
+            with ThreadPoolExecutor(max_workers=len(tables_at_level)) as executor:
+                futures = {executor.submit(self._generate_table_initial_data, t): t
+                           for t in tables_at_level}
+                for future in as_completed(futures):
+                    table = futures[future]
+                    try:
+                        future.result()
+                        logger.info(f"Initial data generated for table '{table}' (level {level}).")
+                    except Exception as e:
+                        logger.error(f"Error generating data for table '{table}': {e}")
 
     def _generate_table_initial_data(self, table: str):
         """
@@ -239,26 +276,52 @@ class DataGenerator:
 
     def enforce_constraints(self):
         """
-        Enforce NOT NULL, CHECK, and UNIQUE constraints for all tables/rows in order.
-        (No concurrency.)
+        Enforce NOT NULL, CHECK, and UNIQUE constraints across all tables,
+        *in parallel by table level*.
         """
-        for table in self.table_order:
-            # Prepare unique sets
-            self.unique_values[table] = {}
-            unique_constrs = self.tables[table].get('unique_constraints', []).copy()
-            pk = self.tables[table].get('primary_key', [])
-            if pk:
-                unique_constrs.append(pk)
-            for u_cols in unique_constrs:
-                self.unique_values[table][tuple(u_cols)] = set()
+        level_groups = self.compute_table_levels()
 
-            rows = self.generated_data[table]
-            new_rows = []
-            for row in rows:
-                row = self.process_row(table, row)
-                self.enforce_unique_constraints(table, row)
-                new_rows.append(row)
-            self.generated_data[table] = new_rows
+        for level in sorted(level_groups.keys()):
+            tables_at_level = level_groups[level]
+            # Constrain concurrency to as many worker threads as tables at this level
+            with ThreadPoolExecutor(max_workers=len(tables_at_level)) as executor:
+                # Launch each table’s constraints in its own thread
+                futures = {executor.submit(self._enforce_constraints_for_table, t): t
+                           for t in tables_at_level}
+                for future in as_completed(futures):
+                    tbl = futures[future]
+                    try:
+                        future.result()
+                        logger.info(f"Constraints enforced for table '{tbl}' at level {level}.")
+                    except Exception as e:
+                        logger.error(f"Error enforcing constraints for table '{tbl}': {e}")
+
+    def _enforce_constraints_for_table(self, table: str):
+        """
+        Run the existing constraint-enforcement logic (NOT NULL, CHECK, UNIQUE)
+        for a single table, exactly as it was in the original enforce_constraints method.
+        """
+        # Set up unique constraints
+        self.unique_values[table] = {}
+        unique_constraints = self.tables[table].get('unique_constraints', []).copy()
+        primary_key = self.tables[table].get('primary_key', [])
+        if primary_key:
+            unique_constraints.append(primary_key)
+        for unique_cols in unique_constraints:
+            self.unique_values[table][tuple(unique_cols)] = set()
+
+        rows = self.generated_data[table]
+
+        # Process each row (NOT NULL, CHECK, etc.)
+        # Example: you might do concurrency at the row level as well,
+        # but let's keep it single-threaded inside the table function:
+        processed_rows = []
+        for row in rows:
+            row = self.process_row(table, row)  # includes foreign keys, fill columns, not null, check
+            self.enforce_unique_constraints(table, row)  # do uniqueness per row
+            processed_rows.append(row)
+
+        self.generated_data[table] = processed_rows
 
     def process_row(self, table: str, row: dict) -> dict:
         """
