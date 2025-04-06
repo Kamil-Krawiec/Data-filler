@@ -843,3 +843,34 @@ class DataGenerator:
                     with open(json_path, mode="w", encoding="utf-8") as f:
                         json.dump(rows, f, indent=2, default=str)
                     logger.info(f"Exported JSON for '{table_name}' to {json_path}")
+
+    def preview_inferred_mappings(self, num_preview=10):
+        """
+        Generate a small preview (num_preview rows) of data for each table
+        using the guessed column_type_mappings. Print out the sample rows to
+        help the user evaluate if the mappings look correct.
+        """
+        # if there are no inferred mappings, just return
+        if not self.column_type_mappings:
+            print("No column_type_mappings found. Either user did not enable guessing or no columns matched.")
+            return
+
+        for table_name, col_map in self.column_type_mappings.items():
+            print(f"\n=== Preview for table '{table_name}' ===")
+            # For each table, generate num_preview rows using only the known mappings
+            for i in range(num_preview):
+                # We'll build a row dictionary from the mapped columns
+                row_data = {}
+                for col_name, generator_fn in col_map.items():
+                    # Some mappings might be a string indicating a direct Faker method (e.g. 'email')
+                    # or might be a lambda/callable.
+                    if callable(generator_fn):
+                        # If it's a lambda of type (fake, row) -> ...
+                        row_data[col_name] = generator_fn(self.fake, row_data)
+                    elif isinstance(generator_fn, str):
+                        # If it's a direct Faker attribute name
+                        row_data[col_name] = getattr(self.fake, generator_fn)()
+                    else:
+                        # If unknown type, fallback:
+                        row_data[col_name] = None
+                print(f"Sample row {i + 1}: {row_data}")
