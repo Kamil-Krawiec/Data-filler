@@ -9,7 +9,7 @@ import numpy as np
 from datetime import datetime, date, timedelta
 from faker import Faker
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from filling import ColumnMappingsGenerator
+from .column_mappings_generator import ColumnMappingsGenerator
 from .check_constraint_evaluator import CheckConstraintEvaluator
 from .helpers import (
     extract_regex_pattern, generate_value_matching_regex,
