@@ -29,15 +29,40 @@ class DataGenerator:
     Intelligent Data Generator for Automated Synthetic Database Population.
     """
 
-    def __init__(self,
-                 tables,
-                 num_rows=10,
-                 predefined_values=None,
-                 column_type_mappings=None,
-                 num_rows_per_table=None,
-                 max_attepts_to_generate_value=50,
-                 guess_column_type_mappings = False,
-                 threshold_for_guessing=0.8):
+    def __init__(self, tables, num_rows=10, predefined_values=None, column_type_mappings=None,
+                 num_rows_per_table=None, max_attepts_to_generate_value=50, guess_column_type_mappings=False,
+                 threshold_for_guessing=0.8) -> None:
+        """
+        Initialize the DataGenerator.
+
+        Sets up the internal state for synthetic data generation, including schema information,
+        primary key counters, foreign key mappings, and optionally auto-generated column type mappings
+        (using fuzzy matching via ColumnMappingsGenerator).
+
+        Parameters
+        ----------
+        tables : dict
+            A dictionary representing the schema, where each key is a table name with its column definitions and constraints.
+        num_rows : int, optional
+            Default number of rows to generate per table (default is 10).
+        predefined_values : dict, optional
+            Pre-defined values for specific columns.
+        column_type_mappings : dict, optional
+            A mapping of column generators.
+        num_rows_per_table : dict, optional
+            Specific number of rows to generate for each table.
+        max_attepts_to_generate_value : int, optional
+            Maximum attempts to generate a valid value that satisfies constraints (default is 50).
+        guess_column_type_mappings : bool, optional
+            If True, auto-generate column type mappings using fuzzy matching.
+        threshold_for_guessing : float, optional
+            Fuzzy matching threshold (0.0 to 1.0) for auto-generation of mappings.
+
+        Returns
+        -------
+        None
+        """
+
         self.tables = tables
         self.num_rows = num_rows
         self.num_rows_per_table = num_rows_per_table or {}
@@ -753,9 +778,25 @@ class DataGenerator:
     # Orchestration
     # --------------------------------------------------------------------------
 
-    def generate_data(self, run_repair=True, print_stats=True) -> dict:
+    def generate_data(self) -> dict:
         """
-        Main entry point for data generation.
+        Generate synthetic data for all tables.
+
+        This is the main entry point for data generation. It first generates initial data for all tables,
+        then enforces constraints (NOT NULL, CHECK, UNIQUE), and optionally runs a repair process to remove
+        rows violating constraints. Finally, it prints statistics if requested.
+
+        Parameters
+        ----------
+        run_repair : bool, optional
+            If True, attempt to repair generated data to remove constraint violations.
+        print_stats : bool, optional
+            If True, print data generation statistics.
+
+        Returns
+        -------
+        dict
+            A dictionary mapping table names to lists of generated row dictionaries.
         """
         logger.info("Starting data generation process.")
         logger.info("Generating initial data (PK fields, etc.)...")
@@ -773,7 +814,19 @@ class DataGenerator:
 
     def export_as_sql_insert_query(self, max_rows_per_insert: int = 1000) -> str:
         """
-        Export all generated data as SQL INSERT statements.
+        Export generated data as SQL INSERT queries.
+
+        Splits the rows into chunks (up to max_rows_per_insert per query) to avoid exceeding database limits on single inserts.
+
+        Parameters
+        ----------
+        max_rows_per_insert : int, optional
+            Maximum number of rows per INSERT statement (default is 1000).
+
+        Returns
+        -------
+        str
+            A string containing SQL INSERT statements for all populated tables.
         """
         insert_queries = []
         for table_name, rows in self.generated_data.items():
@@ -810,9 +863,23 @@ class DataGenerator:
 
         return "\n\n".join(insert_queries)
 
-    def export_data_files(self, output_dir: str, file_type='SQL'):
+    def export_data_files(self, output_dir: str, file_type='SQL') -> None:
         """
-        Export data as CSV/JSON per table or as a single .sql file. (No concurrency.)
+        Export generated data to files in the specified format.
+
+        Exports data for each table as CSV or JSON files, or as a single SQL file containing INSERT statements.
+        The export is performed sequentially.
+
+        Parameters
+        ----------
+        output_dir : str
+            Directory where the exported files will be saved.
+        file_type : str, optional
+            The format to export data ('SQL', 'CSV', or 'JSON'). Default is 'SQL'.
+
+        Returns
+        -------
+        None
         """
         file_type = file_type.upper()
         os.makedirs(output_dir, exist_ok=True)
@@ -844,11 +911,21 @@ class DataGenerator:
                         json.dump(rows, f, indent=2, default=str)
                     logger.info(f"Exported JSON for '{table_name}' to {json_path}")
 
-    def preview_inferred_mappings(self, num_preview=10):
+    def preview_inferred_mappings(self, num_preview: int = 10) -> None:
         """
-        Generate a small preview (num_preview rows) of data for each table
-        using the guessed column_type_mappings. Print out the sample rows to
-        help the user evaluate if the mappings look correct.
+        Print a preview of the inferred column mappings.
+
+        Generates a small sample (num_preview rows) of data for each table using the guessed column type mappings.
+        This preview helps to visually inspect whether the mappings produce appropriate values.
+
+        Parameters
+        ----------
+        num_preview : int, optional
+            Number of sample rows to generate per table (default is 10).
+
+        Returns
+        -------
+        None
         """
         # if there are no inferred mappings, just return
         if not self.column_type_mappings:

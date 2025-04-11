@@ -23,7 +23,18 @@ logger = logging.getLogger(__name__)
 
 def _extract_reference(references: Any) -> Tuple[Optional[str], List[str]]:
     """
-    Extract reference table name and column names from a foreign key reference.
+    Extract the reference table name and list of referenced column names from a foreign key reference.
+
+    Parameters
+    ----------
+    references : Any
+        A sqlglot expression representing the foreign key reference.
+
+    Returns
+    -------
+    Tuple[Optional[str], List[str]]
+        A tuple where the first element is the referenced table name (or None if not found)
+        and the second element is a list of referenced column names.
     """
     if references:
         if isinstance(references.this, Table):
@@ -43,7 +54,25 @@ def _extract_reference(references: Any) -> Tuple[Optional[str], List[str]]:
 
 def _parse_column_def(expression: ColumnDef) -> Dict[str, Any]:
     """
-    Parse a column definition and return its metadata.
+    Parse a sqlglot ColumnDef expression to extract column metadata.
+
+    This function extracts the column name, data type, constraints,
+    foreign key information, and whether the column is marked as SERIAL.
+
+    Parameters
+    ----------
+    expression : ColumnDef
+        A sqlglot expression representing a column definition.
+
+    Returns
+    -------
+    Dict[str, Any]
+        A dictionary containing:
+            - "name": the column name,
+            - "type": the SQL data type in uppercase,
+            - "constraints": a list of constraint strings,
+            - "foreign_key": a dictionary with foreign key details if applicable,
+            - "is_serial": a boolean indicating if the column is a SERIAL type.
     """
     col_name = getattr(expression.this, "name", "").strip()
     if not col_name:
@@ -104,18 +133,27 @@ def parse_create_tables(sql_script: str, dialect: str = 'postgres') -> Dict[str,
     """
     Parse SQL CREATE TABLE statements and extract schema details.
 
+    This function uses sqlglot to parse a given SQL script (in the specified dialect)
+    and returns a dictionary keyed by table names. Each table entry includes metadata
+    such as column definitions, foreign keys, primary keys, unique constraints, and check constraints.
+
     Parameters
     ----------
     sql_script : str
-        The SQL script containing CREATE TABLE statements.
+        The SQL script containing one or more CREATE TABLE statements.
     dialect : str, optional
-        The SQL dialect to parse. Defaults to 'postgres'.
+        The SQL dialect to use for parsing (default is 'postgres').
 
     Returns
     -------
-    dict
-        A dictionary where keys are table names and values contain metadata,
-        including columns, foreign keys, primary keys, unique constraints, and check constraints.
+    Dict[str, Any]
+        A dictionary where each key is a table name and the value is a dictionary
+        containing:
+            - "columns": a list of column metadata dictionaries,
+            - "foreign_keys": a list of foreign key dictionaries,
+            - "primary_key": a list of primary key column names,
+            - "unique_constraints": a list of unique constraint lists,
+            - "check_constraints": a list of check constraint expressions.
     """
     logger.info("Starting to parse SQL script with dialect '%s'", dialect)
     parsed = sqlglot.parse(sql_script, read=dialect)

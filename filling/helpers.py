@@ -167,4 +167,3 @@ def extract_allowed_values(constraints: list, col_name: str) -> list:
             values = [v.strip().strip("'") for v in values.split(',')]
             allowed_values.extend(values)
     return allowed_values
-
