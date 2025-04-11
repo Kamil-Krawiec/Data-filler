@@ -148,9 +148,8 @@ Below is the complete script that ties together all the steps and new features:
 
 .. code-block:: python
 
-    from parsing.parsing import parse_create_tables
-    from filling.data_generator import DataGenerator
-    from filling.column_mappings_generator import ColumnMappingsGenerator
+    from parsing import parse_create_tables
+    from filling import DataGenerator,ColumnMappingsGenerator
     import pprint
 
     # Define and parse the SQL schema
@@ -258,8 +257,7 @@ Example:
 .. code-block:: python
 
     import random
-    from filling.column_mappings_generator import ColumnMappingsGenerator
-    from filling.data_generator import DataGenerator
+    from filling import ColumnMappingsGenerator,DataGenerator
 
     custom_mappings = {
         'shop_name': lambda: 'Shop ' + str(random.randint(1, 100)),

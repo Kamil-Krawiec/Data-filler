@@ -72,45 +72,61 @@ Getting Started
 ---------------
 
 A basic usage example:
-
 .. code-block:: python
 
-    from intelligent_data_generator import DataGenerator, ColumnMappingsGenerator
+    from parsing import parse_create_tables
+    from filling import DataGenerator,ColumnMappingsGenerator
 
-    # Define a sample schema dictionary
-    schema = {
-        'Authors': {
-            'columns': [
-                {'name': 'author_id',   'type': 'SERIAL',         'constraints': ['PRIMARY KEY']},
-                {'name': 'first_name',  'type': 'VARCHAR(50)',    'constraints': ['NOT NULL']},
-                {'name': 'last_name',   'type': 'VARCHAR(50)',    'constraints': ['NOT NULL']},
-                {'name': 'birth_date',  'type': 'DATE',           'constraints': []}
-            ]
-        },
-        'Books': {
-            'columns': [
-                {'name': 'book_id',          'type': 'SERIAL',        'constraints': ['PRIMARY KEY']},
-                {'name': 'title',            'type': 'VARCHAR(100)',  'constraints': ['NOT NULL']},
-                {'name': 'publication_year', 'type': 'INT',           'constraints': ['CHECK (publication_year >= 1500)']}
-            ]
-        }
-    }
+    # Define a simple SQL script for parsing the schema
+    sql_script = """
+    CREATE TABLE Shops (
+        shop_id SERIAL PRIMARY KEY,
+        shop_name VARCHAR(100) NOT NULL,
+        country VARCHAR(50),
+        established_year INT
+    );
 
-    # Optionally auto-generate column type mappings using fuzzy matching:
-    cmg = ColumnMappingsGenerator(threshold=80)
-    mappings = cmg.generate(schema)
+    CREATE TABLE Products (
+        product_id SERIAL PRIMARY KEY,
+        shop_id INT,
+        product_name VARCHAR(100) NOT NULL,
+        price DECIMAL(8,2)
+    );
 
-    # Create the data generator instance
+    CREATE TABLE Orders (
+        order_id SERIAL PRIMARY KEY,
+        shop_id INT,
+        order_date DATE NOT NULL,
+        total_amount DECIMAL(10,2)
+    );
+    """
+
+    # Parse the SQL script to extract table definitions
+    tables = parse_create_tables(sql_script)
+
+    # Create the data generator instance with the parsed schema and mappings with 95% threshold
     dg = DataGenerator(
-        tables=schema,
-        column_type_mappings=mappings,
+        tables,
         num_rows=10,
         guess_column_type_mappings=True,
-        threshold_for_guessing=0.8
+        threshold_for_guessing=95,
     )
 
+    # You can also manually set column mappings if needed
+    # Auto-generate column mappings using fuzzy matching just a preview
+    #cmg = ColumnMappingsGenerator(threshold=80)
+    #mappings = cmg.generate(tables)
+    #    dg = DataGenerator(
+    #    tables,
+    #    num_rows=10,
+    #    column_mappings=mappings,
+    #)
+
+    # printing the inferred mappings preview
+    data_generator.preview_inferred_mappings()
+
     # Generate synthetic data and print statistics
-    data = dg.generate_data(print_stats=True)
+    data = dg.generate_data()
     for table, rows in data.items():
         print(f"Table {table}:")
         for row in rows:
