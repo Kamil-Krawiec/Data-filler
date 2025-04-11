@@ -1,3 +1,4 @@
+import random
 import re
 from datetime import datetime, date, timedelta
 
@@ -21,18 +22,43 @@ class CheckConstraintEvaluator:
     and provides helper functions for operand unification.
     """
 
-    def __init__(self, schema_columns=None):
+    def __init__(self, schema_columns=None) -> None:
         """
-        Initialize the evaluator.
+        Initialize the CheckConstraintEvaluator.
 
-        Args:
-            schema_columns (list, optional): List of column names in the schema.
+        This constructor sets up the evaluator by creating a pyparsing expression parser for SQL CHECK constraints
+        and initializing an optional list of schema column names.
+
+        Parameters
+        ----------
+        schema_columns : list, optional
+            List of column names in the schema.
+
+        Returns
+        -------
+        None
         """
         self.expression_parser = self._create_expression_parser()
         self.schema_columns = schema_columns or []
         self.parsed_constraint_cache = {}
 
-    def _create_expression_parser(self):
+    def _create_expression_parser(self) -> ParserElement:
+        """
+        Create and configure the pyparsing parser for SQL CHECK constraints.
+
+        This method enables packrat parsing and defines the grammar for parsing SQL CHECK constraints,
+        including basic elements (numbers, strings, identifiers), arithmetic, comparison, and boolean operators,
+        as well as support for function calls (EXTRACT, DATE) and parenthesized lists.
+
+        Parameters
+        ----------
+        None
+
+        Returns
+        -------
+        ParserElement
+            The configured expression parser.
+        """
         ParserElement.enablePackrat()
 
         # Basic elements
@@ -93,8 +119,23 @@ class CheckConstraintEvaluator:
 
         return expr
 
-    def _get_parsed_expression(self, check_expression: str):
-        """Cache and return the parsed expression for a given check expression."""
+    def _get_parsed_expression(self, check_expression: str) -> ParseResults:
+        """
+        Parse and cache the SQL CHECK constraint expression.
+
+        If the given check expression is not cached, this method parses it using the expression parser and
+        stores the result for future evaluations.
+
+        Parameters
+        ----------
+        check_expression : str
+            The SQL CHECK constraint expression to parse.
+
+        Returns
+        -------
+        ParseResults
+            The parsed expression.
+        """
         if check_expression not in self.parsed_constraint_cache:
             parsed_expr = self.expression_parser.parseString(check_expression, parseAll=True)[0]
             self.parsed_constraint_cache[check_expression] = parsed_expr
@@ -102,10 +143,22 @@ class CheckConstraintEvaluator:
 
     def extract_conditions(self, check_expression: str) -> dict:
         """
-        Extract conditions from a CHECK constraint into a dictionary.
+        Extract conditions from a SQL CHECK constraint.
 
-        Returns a dict mapping column names to lists of condition dictionaries.
+        Parses the given CHECK constraint expression and returns a dictionary mapping column names
+        to lists of condition dictionaries (each containing an operator and a value).
+
+        Parameters
+        ----------
+        check_expression : str
+            The SQL CHECK constraint expression.
+
+        Returns
+        -------
+        dict
+            A dictionary mapping column names to lists of condition dictionaries.
         """
+
         try:
             parsed_expr = self._get_parsed_expression(check_expression)
             return self._extract_conditions_recursive(parsed_expr)
@@ -114,7 +167,22 @@ class CheckConstraintEvaluator:
             return {}
 
     def _extract_conditions_recursive(self, parsed_expr) -> dict:
-        """Recursively extract conditions from parsed_expr."""
+        """
+        Recursively extract conditions from a parsed expression.
+
+        Traverses the parsed expression tree (ParseResults) to collect conditions for each column.
+        Each condition is stored as a dictionary with keys 'operator' and 'value'.
+
+        Parameters
+        ----------
+        parsed_expr : ParseResults
+            The parsed expression obtained from the expression parser.
+
+        Returns
+        -------
+        dict
+            A dictionary mapping column names to condition lists.
+        """
         conditions = {}
         if isinstance(parsed_expr, ParseResults):
             if len(parsed_expr) == 3:
@@ -148,10 +216,25 @@ class CheckConstraintEvaluator:
                         conditions.setdefault(col, []).extend(conds)
         return conditions
 
-    def _evaluate_literal(self, value, treat_as_identifier: bool = False):
+    def _evaluate_literal(self, value, treat_as_identifier: bool = False) -> any:
         """
         Evaluate a literal value from an expression.
-        This simplified version handles ParseResults, strings, and numbers.
+
+        Handles literal values from ParseResults, strings, and numbers. Special tokens such as 'CURRENT_DATE'
+        are converted appropriately. If treat_as_identifier is True and the value is among the schema columns,
+        it is returned unchanged.
+
+        Parameters
+        ----------
+        value : any
+            The literal value to evaluate.
+        treat_as_identifier : bool, optional
+            Whether to treat the value as an identifier.
+
+        Returns
+        -------
+        any
+            The evaluated literal value.
         """
         if isinstance(value, (ParseResults, list)):
             return self._evaluate_expression(value, {})
@@ -168,9 +251,25 @@ class CheckConstraintEvaluator:
             return value
         return value
 
-    def evaluate(self, check_expression: str, row: dict) -> bool:
+    def evaluate(self, check_expression: str, row: dict) -> tuple:
         """
-        Evaluate a CHECK constraint expression against a row.
+        Evaluate a SQL CHECK constraint against a row of data.
+
+        Parses the given CHECK constraint and evaluates it against the provided row.
+        Returns a tuple (result, candidate) where result is a boolean indicating whether the constraint
+        is satisfied and candidate is a proposed value if the constraint fails.
+
+        Parameters
+        ----------
+        check_expression : str
+            The SQL CHECK constraint expression.
+        row : dict
+            A dictionary representing a row of data.
+
+        Returns
+        -------
+        tuple
+            (result, candidate) where result is a boolean and candidate is a proposed adjustment if needed.
         """
         try:
             parsed_expr = self.expression_parser.parseString(check_expression, parseAll=True)[0]
@@ -251,11 +350,24 @@ class CheckConstraintEvaluator:
                 return self.date_func(self._evaluate_expression(arg_str, row))
         raise ValueError(f"Unsupported plain function call: {s}")
 
-    def _evaluate_function_call(self, expr, row: dict):
+    def _evaluate_function_call(self, expr, row: dict) -> any:
         """
-        Evaluate a structured function call (ParseResults with a 'func_name').
-        Supports functions such as EXTRACT, DATE, UPPER, LOWER, LENGTH, SUBSTRING, ROUND,
-        ABS, COALESCE, POWER, MOD, TRIM, INITCAP, CONCAT, REGEXP_LIKE, etc.
+        Evaluate a structured function call from a parsed expression.
+
+        Supports SQL functions such as EXTRACT, DATE, UPPER, LOWER, LENGTH, SUBSTRING, ROUND, ABS, COALESCE,
+        POWER, MOD, TRIM, INITCAP, CONCAT, and REGEXP_LIKE.
+
+        Parameters
+        ----------
+        expr : ParseResults
+            The parsed function call expression, which includes 'func_name' and arguments.
+        row : dict
+            The row of data used for evaluation.
+
+        Returns
+        -------
+        any
+            The result of the function call.
         """
         func_name = str(expr['func_name']).upper()
         if func_name == 'EXTRACT':
@@ -335,10 +447,24 @@ class CheckConstraintEvaluator:
             else:
                 raise ValueError(f"Unsupported function '{func_name}' in CHECK constraint")
 
-    def _evaluate_expression(self, expr, row: dict):
+    def _evaluate_expression(self, expr, row: dict) -> any:
         """
-        Recursively evaluate an expression (which can be a ParseResults, list, or literal)
-        against the provided row.
+        Recursively evaluate an expression against a row of data.
+
+        Handles expressions provided as strings, lists, or ParseResults. This method processes nested expressions,
+        function calls, and operators to compute a final value in the context of the given row.
+
+        Parameters
+        ----------
+        expr : any
+            The expression to evaluate.
+        row : dict
+            The row of data for evaluation.
+
+        Returns
+        -------
+        any
+            The evaluated result of the expression.
         """
         # If expr is a string, check for plain-text function calls.
         if isinstance(expr, str):
@@ -405,11 +531,27 @@ class CheckConstraintEvaluator:
             return expr
         return expr
 
-    def apply_operator(self, left, operator: str, right):
+    def apply_operator(self, left, operator: str, right) -> tuple:
         """
-        Apply a binary operator to the left and right operands.
-        Returns a tuple (result, candidate) where candidate is None if the condition is met.
-        If the condition is false, candidate is a proposed value for the left operand.
+        Apply a binary operator to left and right operands.
+
+        Supports standard arithmetic, comparison, logical, and SQL-specific operators (LIKE, IN, BETWEEN, etc.).
+        If the operator condition is not met, a candidate value is proposed for the left operand.
+
+        Parameters
+        ----------
+        left : any
+            The left operand.
+        operator : str
+            The operator as a string.
+        right : any
+            The right operand.
+
+        Returns
+        -------
+        tuple
+            (result, candidate) where result is a boolean indicating whether the condition is satisfied,
+            and candidate is a proposed value for the left operand if not.
         """
         op = operator.upper()
 
@@ -463,7 +605,7 @@ class CheckConstraintEvaluator:
             if result:
                 return True, None
             else:
-                candidate = right[0] if right else None
+                candidate = random.choice(right) if right else None
                 return False, candidate
         elif op == 'NOT IN':
             result = left not in right
@@ -503,13 +645,24 @@ class CheckConstraintEvaluator:
 
         raise ValueError(f"Unsupported operator '{operator}'")
 
-    def _propose_candidate(self, op, left):
+    def _propose_candidate(self, op, left) -> any:
         """
-        Propose a candidate for the left operand so that the binary condition becomes True.
-        The candidate is computed solely from the current left value.
-        For numeric types, it adds or subtracts a fixed delta.
-        For dates, it adds or subtracts one day.
-        For strings, it appends or prepends a minimal modification.
+        Propose a candidate for the left operand to satisfy a binary condition.
+
+        Based solely on the current value of the left operand, this method calculates a candidate value
+        by adjusting numeric values, dates, or strings as appropriate.
+
+        Parameters
+        ----------
+        op : str
+            The operator (e.g., '>', '<', 'LIKE').
+        left : any
+            The current value of the left operand.
+
+        Returns
+        -------
+        any
+            A candidate value intended to satisfy the condition.
         """
         op = op.upper()
 
@@ -553,9 +706,22 @@ class CheckConstraintEvaluator:
         # simply return left as a fallback.
         return left
 
-    def date_func(self, arg):
+    def date_func(self, arg) -> date:
         """
         Simulate the SQL DATE function.
+
+        Converts the input argument to a date object. If the argument is a string, it is parsed using
+        the '%Y-%m-%d' format.
+
+        Parameters
+        ----------
+        arg : any
+            The value to convert to a date.
+
+        Returns
+        -------
+        date
+            The resulting date object.
         """
         if isinstance(arg, str):
             return datetime.strptime(arg, '%Y-%m-%d').date()
@@ -566,10 +732,22 @@ class CheckConstraintEvaluator:
         else:
             raise ValueError(f"Unsupported argument for DATE function: {arg}")
 
-    def _as_date(self, val):
+    def _as_date(self, val) -> any:
         """
-        If val looks like a date string in one of the formats, return a date object.
-        Otherwise, return val.
+        Convert a value to a date object if possible.
+
+        Attempts to parse the input (if a string) using common date formats; if parsing fails,
+        returns the original value.
+
+        Parameters
+        ----------
+        val : any
+            The value to convert.
+
+        Returns
+        -------
+        any
+            A date object if conversion is successful, or the original value otherwise.
         """
         if not isinstance(val, str):
             return val
@@ -581,18 +759,49 @@ class CheckConstraintEvaluator:
                 continue
         return val
 
-    def _as_numeric(self, val):
-        """Attempt to convert val to a number."""
+    def _as_numeric(self, val) -> any:
+        """
+        Attempt to convert a value to a numeric type.
+
+        Parses the input value as an integer or float if possible.
+
+        Parameters
+        ----------
+        val : any
+            The value to convert.
+
+        Returns
+        -------
+        int or float or None
+            The numeric value if conversion succeeds; otherwise, None.
+        """
+
         if isinstance(val, (int, float)):
             return val
         if isinstance(val, str) and re.match(r'^\d+(\.\d+)?$', val):
             return float(val) if '.' in val else int(val)
         return None
 
-    def unify_operands(self, left, right):
+    def unify_operands(self, left, right) -> tuple:
         """
-        Coerce both operands to date or numeric if possible.
+        Coerce both operands to a common type if possible.
+
+        Attempts to convert both operands to date or numeric types. If both can be converted,
+        returns the converted values; otherwise, returns the original operands.
+
+        Parameters
+        ----------
+        left : any
+            The left operand.
+        right : any
+            The right operand.
+
+        Returns
+        -------
+        tuple
+            A tuple (left, right) with operands coerced to common types if possible.
         """
+
         left_d = self._as_date(left)
         right_d = self._as_date(right)
         if isinstance(left_d, date) and isinstance(right_d, date):
@@ -606,6 +815,21 @@ class CheckConstraintEvaluator:
     def convert_sql_expr_to_python(self, parsed_expr, row: dict) -> str:
         """
         Convert a parsed SQL expression into a Python expression string.
+
+        Recursively converts literals, identifiers, and function calls from the parsed SQL expression
+        into a corresponding Python expression string for evaluation.
+
+        Parameters
+        ----------
+        parsed_expr : any
+            The parsed SQL expression.
+        row : dict
+            The row of data used for context during conversion.
+
+        Returns
+        -------
+        str
+            The resulting Python expression string.
         """
         if isinstance(parsed_expr, str):
             token = parsed_expr.upper()
@@ -657,6 +881,21 @@ class CheckConstraintEvaluator:
     def handle_operator(self, parsed_expr, row: dict) -> str:
         """
         Convert an operator expression into a Python expression string.
+
+        Maps SQL operators (e.g., '=', '<>', 'LIKE', 'IN') to their Python equivalents and constructs
+        a corresponding expression string.
+
+        Parameters
+        ----------
+        parsed_expr : ParseResults
+            The parsed operator expression.
+        row : dict
+            The row of data used for context.
+
+        Returns
+        -------
+        str
+            A Python expression string representing the operator expression.
         """
         if len(parsed_expr) == 2:
             operator = parsed_expr[0]
@@ -696,6 +935,20 @@ class CheckConstraintEvaluator:
     def extract(self, field: str, source) -> int:
         """
         Simulate the SQL EXTRACT function.
+
+        Extracts a specific component (year, month, or day) from a given date or datetime source.
+
+        Parameters
+        ----------
+        field : str
+            The field to extract (e.g., 'year', 'month', 'day').
+        source : any
+            The source date or datetime (or string representing a date).
+
+        Returns
+        -------
+        int
+            The extracted numeric value.
         """
         field = field.strip("'").lower()
         if isinstance(source, str):
@@ -721,12 +974,22 @@ class CheckConstraintEvaluator:
         """
         Simulate the SQL REGEXP_LIKE function.
 
-        Returns:
-            tuple: (result, candidate)
-              - result (bool): True if 'value' matches the regex 'pattern', False otherwise.
-              - candidate (str or None): If result is False, a candidate string that satisfies the regex,
-                                         or an empty string if no candidate was found; if result is True, None.
+        Checks whether the given value matches the specified regular expression pattern.
+        If the value does not match, returns a candidate value that may satisfy the pattern.
+
+        Parameters
+        ----------
+        value : str
+            The value to test.
+        pattern : str
+            The regular expression pattern (optionally quoted).
+
+        Returns
+        -------
+        tuple
+            (result, candidate) where result is a boolean indicating a match and candidate is a proposed value if no match is found.
         """
+
         if pattern.startswith("'") and pattern.endswith("'"):
             pattern = pattern[1:-1]
         if not isinstance(value, str):
@@ -742,10 +1005,24 @@ class CheckConstraintEvaluator:
             candidate = generate_value_matching_regex(pattern)
             return False, candidate
 
-
     def like(self, value: str, pattern: str) -> bool:
         """
         Simulate the SQL LIKE operator.
+
+        Converts the SQL LIKE pattern (using '%' and '_') into a regular expression and checks whether
+        the given value matches the pattern.
+
+        Parameters
+        ----------
+        value : str
+            The value to test.
+        pattern : str
+            The SQL LIKE pattern.
+
+        Returns
+        -------
+        bool
+            True if the value matches the pattern, otherwise False.
         """
         pattern = pattern.strip("'").replace('%', '.*').replace('_', '.')
         if not isinstance(value, str):
@@ -755,5 +1032,19 @@ class CheckConstraintEvaluator:
     def not_like(self, value: str, pattern: str) -> bool:
         """
         Simulate the SQL NOT LIKE operator.
+
+        Returns the negation of the LIKE operator evaluation for the given value and pattern.
+
+        Parameters
+        ----------
+        value : str
+            The value to test.
+        pattern : str
+            The SQL LIKE pattern.
+
+        Returns
+        -------
+        bool
+            True if the value does not match the pattern, otherwise False.
         """
         return not self.like(value, pattern)
