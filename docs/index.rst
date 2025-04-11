@@ -72,6 +72,7 @@ Getting Started
 ---------------
 
 A basic usage example:
+
 .. code-block:: python
 
     from parsing import parse_create_tables
