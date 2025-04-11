@@ -115,13 +115,13 @@ A basic usage example:
 
     # You can also manually set column mappings if needed
     # Auto-generate column mappings using fuzzy matching just a preview
-    #cmg = ColumnMappingsGenerator(threshold=80)
-    #mappings = cmg.generate(tables)
+    # cmg = ColumnMappingsGenerator(threshold=80)
+    # mappings = cmg.generate(tables)
     #    dg = DataGenerator(
     #    tables,
     #    num_rows=10,
     #    column_mappings=mappings,
-    #)
+    # )
 
     # printing the inferred mappings preview
     data_generator.preview_inferred_mappings()
