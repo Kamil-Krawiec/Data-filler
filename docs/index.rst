@@ -145,8 +145,10 @@ Additional Resources
 
      parsing
      filling
+     example_of_usage
      check_constraint_evaluator
      column_mappings_generator
+
 
 - **Examples and Tutorials:**
   Refer to the example usage page for step-by-step tutorials and advanced configurations.

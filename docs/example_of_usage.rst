@@ -26,9 +26,8 @@ Begin by importing the necessary modules. Notice the new import for the ``Column
 
 .. code-block:: python
 
-    from parsing.parsing import parse_create_tables
-    from filling.data_generator import DataGenerator
-    from filling.column_mappings_generator import ColumnMappingsGenerator
+    from parsing import parse_create_tables
+    from filling import DataGenerator, ColumnMappingsGenerator
     import pprint  # Optional: for pretty-printing generated data
 
 Step 2: Define and Parse the SQL Script
